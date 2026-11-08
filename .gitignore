@@ -1,0 +1,13 @@
+# Lokale Build-Dateien
+/build/
+/artifacts/
+*.log
+
+# Private Schlüssel und Router-Sicherungen
+key-build
+key-build.ucert
+key-build.ucert.revoke
+mango_freifunk
+*.pem
+*.key
+*.tar.gz

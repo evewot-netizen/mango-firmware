@@ -1,0 +1,383 @@
+diff --git a/package/network/services/hostapd/Makefile b/package/network/services/hostapd/Makefile
+index 8753782012..e921b07df9 100644
+--- a/package/network/services/hostapd/Makefile
++++ b/package/network/services/hostapd/Makefile
+@@ -5,7 +5,7 @@
+ include $(TOPDIR)/rules.mk
+ 
+ PKG_NAME:=hostapd
+-PKG_RELEASE:=2
++PKG_RELEASE:=3
+ 
+ PKG_SOURCE_URL:=https://w1.fi/hostap.git
+ PKG_SOURCE_PROTO:=git
+diff --git a/package/network/services/hostapd/patches/001-AP-MLD-Fix-link-ID-validation-in-Basic-MLE-parsing.patch b/package/network/services/hostapd/patches/001-AP-MLD-Fix-link-ID-validation-in-Basic-MLE-parsing.patch
+new file mode 100644
+index 0000000000..15547cbd47
+--- /dev/null
++++ b/package/network/services/hostapd/patches/001-AP-MLD-Fix-link-ID-validation-in-Basic-MLE-parsing.patch
+@@ -0,0 +1,43 @@
++From 46dd5a4ffc9bcf44cf8fc45120b3e1e5ec922187 Mon Sep 17 00:00:00 2001
++From: Jouni Malinen <jouni.malinen@oss.qualcomm.com>
++Date: Tue, 31 Mar 2026 23:24:04 +0300
++Subject: AP MLD: Fix link ID validation in Basic MLE parsing
++
++Link ID 15 can be indicated in the field, but that is not a valid value
++and must be rejected to avoid issues pointing beyond the array of links
++for a non-AP MLD. Without this, an invalid MLE could result in writing
++beyond the end of the buffer and causing process termination or
++unexpected behavior.
++
++Fixes: 5f5db9366cde ("AP: MLO: Process Multi-Link element from (Re)Association Request frame")
++Signed-off-by: Jouni Malinen <jouni.malinen@oss.qualcomm.com>
++---
++ src/ap/ieee802_11_eht.c | 10 ++++++++--
++ 1 file changed, 8 insertions(+), 2 deletions(-)
++
++--- a/src/ap/ieee802_11_eht.c
+++++ b/src/ap/ieee802_11_eht.c
++@@ -1290,6 +1290,7 @@ u16 hostapd_process_ml_assoc_req(struct
++ 		size_t sub_elem_len = *(pos + 1);
++ 		size_t sta_info_len;
++ 		u16 control;
+++		u8 link_id;
++ 
++ 		wpa_printf(MSG_DEBUG, "MLD: sub element len=%zu",
++ 			   sub_elem_len);
++@@ -1330,8 +1331,13 @@ u16 hostapd_process_ml_assoc_req(struct
++ 			goto out;
++ 		}
++ 		control = WPA_GET_LE16(pos);
++-		link_info = &info->links[control &
++-					 EHT_PER_STA_CTRL_LINK_ID_MSK];
+++		link_id = control & EHT_PER_STA_CTRL_LINK_ID_MSK;
+++		if (link_id >= MAX_NUM_MLD_LINKS) {
+++			wpa_printf(MSG_DEBUG,
+++				   "MLD: Invalid Link ID in Per-STA Profile subelement");
+++			goto out;
+++		}
+++		link_info = &info->links[link_id];
++ 		pos += 2;
++ 		ml_len -= 2;
++ 		sub_elem_len -= 2;
+diff --git a/package/network/services/hostapd/patches/002-BSS-Add-bounds-check-for-link_id-in-Basic-MLE-parsin.patch b/package/network/services/hostapd/patches/002-BSS-Add-bounds-check-for-link_id-in-Basic-MLE-parsin.patch
+new file mode 100644
+index 0000000000..131740931d
+--- /dev/null
++++ b/package/network/services/hostapd/patches/002-BSS-Add-bounds-check-for-link_id-in-Basic-MLE-parsin.patch
+@@ -0,0 +1,38 @@
++From aa9d345887389a251c63a3781d2ad2940d079193 Mon Sep 17 00:00:00 2001
++From: Amarnath Hullur Subramanyam <amarnathhs@google.com>
++Date: Thu, 30 Apr 2026 18:24:35 -0700
++Subject: BSS: Add bounds check for link_id in Basic MLE parsing
++
++In wpa_bss_parse_basic_ml_element() in bss.c, an extracted link_id is
++used without validation against the maximum allowed links
++(MAX_NUM_MLD_LINKS). Processing a malformed Basic Multi-Link element
++(MLE) with an out-of-bounds link_id could lead to memory corruption.
++However, the modified location is within the body of the received frame
++and as such, this does not result in additional issues since that area
++is controlled by the transmitter of the frame. In any case, it is better
++to be explicit with validating the Link ID value.
++
++This commit introduces a strict bounds check immediately after link_id
++extraction. If link_id exceeds or equals MAX_NUM_MLD_LINKS, parsing is
++gracefully aborted with a debug log entry.
++
++Fixes: de5e01010cb2 ("wpa_supplicant: Support ML probe request")
++Signed-off-by: Amarnath Hullur Subramanyam <amarnathhs@google.com>
++---
++ wpa_supplicant/bss.c | 5 +++++
++ 1 file changed, 5 insertions(+)
++
++--- a/wpa_supplicant/bss.c
+++++ b/wpa_supplicant/bss.c
++@@ -1773,6 +1773,11 @@ int wpa_bss_parse_basic_ml_element(struc
++ 			  ETH_ALEN);
++ 
++ 	link_id = ml_basic_common_info->variable[0] & EHT_ML_LINK_ID_MSK;
+++	if (link_id >= MAX_NUM_MLD_LINKS) {
+++		wpa_printf(MSG_DEBUG, "MLD: Invalid link ID %u in Basic MLE",
+++			   link_id);
+++		goto out;
+++	}
++ 
++ 	bss->mld_link_id = link_id;
++ 	seen = bss->valid_links = BIT(link_id);
+diff --git a/package/network/services/hostapd/patches/003-MLD-Validate-MLE-Link-ID-fields-in-association-rejec.patch b/package/network/services/hostapd/patches/003-MLD-Validate-MLE-Link-ID-fields-in-association-rejec.patch
+new file mode 100644
+index 0000000000..362862cacc
+--- /dev/null
++++ b/package/network/services/hostapd/patches/003-MLD-Validate-MLE-Link-ID-fields-in-association-rejec.patch
+@@ -0,0 +1,45 @@
++From a8531e3d871e6fa72f2f85d91e9f787326b2af8b Mon Sep 17 00:00:00 2001
++From: Jouni Malinen <jouni.malinen@oss.qualcomm.com>
++Date: Tue, 31 Mar 2026 23:16:08 +0300
++Subject: MLD: Validate MLE Link ID fields in association rejection case
++
++The Link ID Info field in the Common Info field needs to ignore the
++reserved bits to be more extensible for future. Both that link ID for
++the association link and the link IDs for other links need to be
++verified to be within the valid range (0-14), so check that here. The
++parsed link ID was not used for anything yet, but it is better to make
++sure this in theory common parser is not exposing invalid data to the
++caller should it be used for additional purposes in the future.
++
++Signed-off-by: Jouni Malinen <jouni.malinen@oss.qualcomm.com>
++---
++ wpa_supplicant/events.c | 11 ++++++++++-
++ 1 file changed, 10 insertions(+), 1 deletion(-)
++
++--- a/wpa_supplicant/events.c
+++++ b/wpa_supplicant/events.c
++@@ -3972,7 +3972,12 @@ static unsigned int wpas_ml_parse_assoc(
++ 	pos = common_info->variable;
++ 
++ 	/* Store the information for the association link */
++-	ml_info[i].link_id = *pos;
+++	ml_info[i].link_id = *pos & EHT_ML_LINK_ID_MSK;
+++	if (ml_info[i].link_id >= MAX_NUM_MLD_LINKS) {
+++		wpa_printf(MSG_DEBUG,
+++			   "MLD: Invalid Link ID value for assoc link");
+++		goto out;
+++	}
++ 	pos++;
++ 
++ 	/* Skip the BSS Parameters Change Count */
++@@ -4107,6 +4112,10 @@ static unsigned int wpas_ml_parse_assoc(
++ 			   MAC2STR(pos + 1), nstr_bitmap_len);
++ 
++ 		ml_info[i].link_id = ctrl & EHT_PER_STA_CTRL_LINK_ID_MSK;
+++		if (ml_info[i].link_id >= MAX_NUM_MLD_LINKS) {
+++			wpa_printf(MSG_DEBUG, "MLD: Invalid Link ID value");
+++			goto out;
+++		}
++ 		os_memcpy(ml_info[i].bssid, pos + 1, ETH_ALEN);
++ 
++ 		pos += sta_info_len;
+diff --git a/package/network/services/hostapd/patches/006-AP-MLD-Verify-AP-MLD-link-ID-validity-before-updatin.patch b/package/network/services/hostapd/patches/006-AP-MLD-Verify-AP-MLD-link-ID-validity-before-updatin.patch
+new file mode 100644
+index 0000000000..f6f27eb6d9
+--- /dev/null
++++ b/package/network/services/hostapd/patches/006-AP-MLD-Verify-AP-MLD-link-ID-validity-before-updatin.patch
+@@ -0,0 +1,37 @@
++From ce1a8612e309fe86133ecf05ffb452b0bdf3b035 Mon Sep 17 00:00:00 2001
++From: Jouni Malinen <jouni.malinen@oss.qualcomm.com>
++Date: Mon, 18 May 2026 15:45:15 +0300
++Subject: AP MLD: Verify AP MLD link ID validity before updating bitmap of
++ links
++
++Link ID is 0..14, so ignore value 15 if an invalid frame is processed.
++It does not look like the invalid value was actually used to reference
++any local array, but in any case, it is better to not mark an invalid
++link as being specified.
++
++Signed-off-by: Jouni Malinen <jouni.malinen@oss.qualcomm.com>
++---
++ src/ap/beacon.c | 5 ++++-
++ 1 file changed, 4 insertions(+), 1 deletion(-)
++
++--- a/src/ap/beacon.c
+++++ b/src/ap/beacon.c
++@@ -1366,6 +1366,7 @@ static bool parse_ml_probe_req(const str
++ 	for_each_element_id(sub, 0, pos, len) {
++ 		const struct ieee80211_eht_per_sta_profile *sta;
++ 		u16 sta_control;
+++		u8 link_id;
++ 
++ 		if (*links == 0xffff)
++ 			*links = 0;
++@@ -1385,7 +1386,9 @@ static bool parse_ml_probe_req(const str
++ 		 * partial profile was requested.
++ 		 */
++ 		sta_control = le_to_host16(sta->sta_control);
++-		*links |= BIT(sta_control & EHT_PER_STA_CTRL_LINK_ID_MSK);
+++		link_id = sta_control & EHT_PER_STA_CTRL_LINK_ID_MSK;
+++		if (link_id < MAX_NUM_MLD_LINKS)
+++			*links |= BIT(link_id);
++ 	}
++ 
++ 	if (!for_each_element_completed(sub, pos, len)) {
+diff --git a/package/network/services/hostapd/patches/007-MLD-Fix-length-check-in-common-info-for-association-.patch b/package/network/services/hostapd/patches/007-MLD-Fix-length-check-in-common-info-for-association-.patch
+new file mode 100644
+index 0000000000..cb3c42caef
+--- /dev/null
++++ b/package/network/services/hostapd/patches/007-MLD-Fix-length-check-in-common-info-for-association-.patch
+@@ -0,0 +1,37 @@
++From 41c86a2ebed50567c73de23c102c2bf83eb883f2 Mon Sep 17 00:00:00 2001
++From: Jouni Malinen <jouni.malinen@oss.qualcomm.com>
++Date: Tue, 31 Mar 2026 17:47:03 +0300
++Subject: MLD: Fix length check in common info for association failure cases
++
++It is not sufficient to check that the indicated common info length is
++sufficiently large to contain the information; there needs to be a check
++for the indicated value to not be too large to go beyond the end of the
++MLE as well. Without this, invalid MLE might result in ml_len wrapping
++around to a huge value and reading beyond the end of the buffer for the
++received frame. This could result in process termination.
++
++Add the missed check for the Common Info field not being truncated in
++the MLE in association failure cases.
++
++Fixes: a58a0c592e20 ("MLD: Fix Multi-Link element parsing for association failures")
++Signed-off-by: Jouni Malinen <jouni.malinen@oss.qualcomm.com>
++---
++ wpa_supplicant/events.c | 7 +++++++
++ 1 file changed, 7 insertions(+)
++
++--- a/wpa_supplicant/events.c
+++++ b/wpa_supplicant/events.c
++@@ -3960,6 +3960,13 @@ static unsigned int wpas_ml_parse_assoc(
++ 		goto out;
++ 	}
++ 
+++	if (sizeof(*ml) + common_info->len > ml_len) {
+++		wpa_printf(MSG_DEBUG,
+++			   "MLD: Truncated common info (common_info->len=%u ml_len=%zu)",
+++			   common_info->len, ml_len);
+++		goto out;
+++	}
+++
++ 	wpa_printf(MSG_DEBUG, "MLD: address: " MACSTR,
++ 		   MAC2STR(common_info->mld_addr));
++ 
+diff --git a/package/network/services/hostapd/patches/200-multicall.patch b/package/network/services/hostapd/patches/200-multicall.patch
+index 80a484e974..c22ae0ea43 100644
+--- a/package/network/services/hostapd/patches/200-multicall.patch
++++ b/package/network/services/hostapd/patches/200-multicall.patch
+@@ -278,7 +278,7 @@ This allows building both hostapd and wpa_supplicant as a single binary
+  	os_memset(&eapol_test, 0, sizeof(eapol_test));
+ --- a/wpa_supplicant/events.c
+ +++ b/wpa_supplicant/events.c
+-@@ -6131,8 +6131,8 @@ static int wpas_pasn_auth(struct wpa_sup
++@@ -6147,8 +6147,8 @@ static int wpas_pasn_auth(struct wpa_sup
+  #endif /* CONFIG_PASN */
+  
+  
+@@ -289,7 +289,7 @@ This allows building both hostapd and wpa_supplicant as a single binary
+  {
+  	struct wpa_supplicant *wpa_s = ctx;
+  	int resched;
+-@@ -7084,7 +7084,7 @@ void wpa_supplicant_event(void *ctx, enu
++@@ -7100,7 +7100,7 @@ void wpa_supplicant_event(void *ctx, enu
+  }
+  
+  
+diff --git a/package/network/services/hostapd/patches/600-ubus_support.patch b/package/network/services/hostapd/patches/600-ubus_support.patch
+index 256d1cfcc4..bca550d635 100644
+--- a/package/network/services/hostapd/patches/600-ubus_support.patch
++++ b/package/network/services/hostapd/patches/600-ubus_support.patch
+@@ -53,7 +53,7 @@ probe/assoc/auth requests via object subscribe.
+  	}
+ --- a/src/ap/beacon.c
+ +++ b/src/ap/beacon.c
+-@@ -1418,6 +1418,12 @@ void handle_probe_req(struct hostapd_dat
++@@ -1421,6 +1421,12 @@ void handle_probe_req(struct hostapd_dat
+  	int mld_id;
+  	u16 links;
+  #endif /* CONFIG_IEEE80211BE */
+@@ -66,7 +66,7 @@ probe/assoc/auth requests via object subscribe.
+  
+  	if (hapd->iconf->rssi_ignore_probe_request && ssi_signal &&
+  	    ssi_signal < hapd->iconf->rssi_ignore_probe_request)
+-@@ -1604,6 +1610,12 @@ void handle_probe_req(struct hostapd_dat
++@@ -1607,6 +1613,12 @@ void handle_probe_req(struct hostapd_dat
+  	}
+  #endif /* CONFIG_P2P */
+  
+diff --git a/package/network/services/hostapd/patches/601-ucode_support.patch b/package/network/services/hostapd/patches/601-ucode_support.patch
+index 13fd2b1b51..a4a313219c 100644
+--- a/package/network/services/hostapd/patches/601-ucode_support.patch
++++ b/package/network/services/hostapd/patches/601-ucode_support.patch
+@@ -622,7 +622,7 @@ as adding/removing interfaces.
+  CFLAGS += -DEAP_SERVER -DEAP_SERVER_IDENTITY
+ --- a/wpa_supplicant/events.c
+ +++ b/wpa_supplicant/events.c
+-@@ -6167,6 +6167,7 @@ void supplicant_event(void *ctx, enum wp
++@@ -6183,6 +6183,7 @@ void supplicant_event(void *ctx, enum wp
+  		event_to_string(event), event);
+  #endif /* CONFIG_NO_STDOUT_DEBUG */
+  
+diff --git a/package/network/services/hostapd/patches/701-reload_config_inline.patch b/package/network/services/hostapd/patches/701-reload_config_inline.patch
+index 24d3aa86d0..185003ba13 100644
+--- a/package/network/services/hostapd/patches/701-reload_config_inline.patch
++++ b/package/network/services/hostapd/patches/701-reload_config_inline.patch
+@@ -43,7 +43,7 @@ as adding/removing interfaces.
+  			   "error: %s", name, strerror(errno));
+ --- a/hostapd/main.c
+ +++ b/hostapd/main.c
+-@@ -406,7 +406,11 @@ hostapd_interface_init(struct hapd_inter
++@@ -365,7 +365,11 @@ hostapd_interface_init(struct hapd_inter
+  	struct hostapd_iface *iface;
+  	int k;
+  
+@@ -58,7 +58,7 @@ as adding/removing interfaces.
+  		return NULL;
+ --- a/src/ap/hostapd.c
+ +++ b/src/ap/hostapd.c
+-@@ -2893,7 +2893,12 @@ hostapd_interface_init_bss(struct hapd_i
++@@ -3354,8 +3354,13 @@ hostapd_interface_init_bss(struct hapd_i
+  		}
+  	}
+  
+@@ -71,5 +71,6 @@ as adding/removing interfaces.
+ +		wpa_printf(MSG_INFO, "Configuration file: %s (phy %s)%s",
+ +		     config_fname, phy, iface ? "" : " --> new PHY");
+ +	}
+-	if (iface) {
+-		struct hostapd_config *conf;
++ 	if (iface) {
++ 		struct hostapd_config *conf;
++ 		struct hostapd_bss_config **tmp_conf;
+diff --git a/package/network/services/hostapd/patches/720-iface_max_num_sta.patch b/package/network/services/hostapd/patches/720-iface_max_num_sta.patch
+index e9d35de6be..e4f4054d4d 100644
+--- a/package/network/services/hostapd/patches/720-iface_max_num_sta.patch
++++ b/package/network/services/hostapd/patches/720-iface_max_num_sta.patch
+@@ -36,7 +36,7 @@ full device, e.g. in order to deal with hardware/driver limitations
+  			  * ' ' (ascii 32): all environments
+ --- a/src/ap/beacon.c
+ +++ b/src/ap/beacon.c
+-@@ -1634,7 +1634,7 @@ void handle_probe_req(struct hostapd_dat
++@@ -1637,7 +1637,7 @@ void handle_probe_req(struct hostapd_dat
+  	if (hapd->conf->no_probe_resp_if_max_sta &&
+  	    is_multicast_ether_addr(mgmt->da) &&
+  	    is_multicast_ether_addr(mgmt->bssid) &&
+diff --git a/package/network/services/hostapd/patches/762-AP-don-t-ignore-probe-requests-with-invalid-DSSS-par.patch b/package/network/services/hostapd/patches/762-AP-don-t-ignore-probe-requests-with-invalid-DSSS-par.patch
+index 7beb87118f..e1ded14887 100644
+--- a/package/network/services/hostapd/patches/762-AP-don-t-ignore-probe-requests-with-invalid-DSSS-par.patch
++++ b/package/network/services/hostapd/patches/762-AP-don-t-ignore-probe-requests-with-invalid-DSSS-par.patch
+@@ -28,7 +28,7 @@ Signed-off-by: David Bauer <mail@david-bauer.net>
+ 
+ --- a/src/ap/beacon.c
+ +++ b/src/ap/beacon.c
+-@@ -1477,7 +1477,7 @@ void handle_probe_req(struct hostapd_dat
++@@ -1480,7 +1480,7 @@ void handle_probe_req(struct hostapd_dat
+  	 * is less likely to see them (Probe Request frame sent on a
+  	 * neighboring, but partially overlapping, channel).
+  	 */
+diff --git a/package/network/services/hostapd/patches/770-radius_server.patch b/package/network/services/hostapd/patches/770-radius_server.patch
+index c110a85e2e..a42c4068b4 100644
+--- a/package/network/services/hostapd/patches/770-radius_server.patch
++++ b/package/network/services/hostapd/patches/770-radius_server.patch
+@@ -29,7 +29,7 @@ handle reload.
+  
+  #ifndef CONFIG_NO_HOSTAPD_LOGGER
+  static void hostapd_logger_cb(void *ctx, const u8 *addr, unsigned int module,
+-@@ -793,6 +794,11 @@ int main(int argc, char *argv[])
++@@ -797,6 +798,11 @@ int main(int argc, char *argv[])
+  	if (os_program_init())
+  		return -1;
+  
+diff --git a/package/network/services/hostapd/patches/804-hostapd-Fix-clearing-up-settings-for-color-switch.patch b/package/network/services/hostapd/patches/804-hostapd-Fix-clearing-up-settings-for-color-switch.patch
+index 87d68911c7..37c45a4eac 100644
+--- a/package/network/services/hostapd/patches/804-hostapd-Fix-clearing-up-settings-for-color-switch.patch
++++ b/package/network/services/hostapd/patches/804-hostapd-Fix-clearing-up-settings-for-color-switch.patch
+@@ -18,7 +18,7 @@ Signed-off-by: Stone Zhang <quic_stonez@quicinc.com>
+ 
+ --- a/src/ap/hostapd.c
+ +++ b/src/ap/hostapd.c
+-@@ -4813,6 +4813,7 @@ static void hostapd_switch_color_timeout
++@@ -4818,6 +4818,7 @@ static void hostapd_switch_color_timeout
+  		struct cca_settings settings;
+  		int ret;
+  

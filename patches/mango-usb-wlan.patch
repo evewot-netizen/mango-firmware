@@ -1,0 +1,21 @@
+diff --git a/image-customization.lua b/image-customization.lua
+index 4ca68e9..3e17250 100644
+--- a/image-customization.lua
++++ b/image-customization.lua
+@@ -38,3 +38,16 @@ packages({
+     'haveged',
+     'iwinfo',
+ })
++
++-- Mango USB-WLAN-Erweiterung
++if device({'gl-mt300n-v2'}) then
++    packages({
++        'kmod-usb2',
++        'kmod-usb-ohci',
++        'kmod-ath9k-htc',
++        'ath9k-htc-firmware',
++        'kmod-rtw88-8821au',
++        'rtl8821a-firmware',
++        'wpa-supplicant-mbedtls',
++    })
++end

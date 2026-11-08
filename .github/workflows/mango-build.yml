@@ -1,0 +1,117 @@
+name: Mango-Testbuild
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mango-testbuild
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Projekt herunterladen
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Platz auf dem GitHub-Baurechner schaffen
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h .
+
+      - name: Bauwerkzeuge installieren
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang git python3 python3-dev python3-pyelftools \
+            python3-setuptools build-essential gawk unzip \
+            libncurses-dev zlib1g-dev libssl-dev libelf-dev \
+            llvm wget rsync time qemu-utils ecdsautils swig \
+            gettext xsltproc file patch perl xz-utils zstd \
+            ca-certificates curl
+
+      - name: Getestete Quellstaende laden
+        run: |
+          set -euo pipefail
+          source sources.env
+          mkdir -p build artifacts
+          cp sources.env artifacts/
+
+          checkout_source() {
+            local url="$1" commit="$2" directory="$3"
+            git init "$directory"
+            git -C "$directory" remote add origin "$url"
+            git -C "$directory" fetch --depth=1 origin "$commit"
+            git -C "$directory" checkout --detach FETCH_HEAD
+            test "$(git -C "$directory" rev-parse HEAD)" = "$commit"
+          }
+
+          checkout_source "$GLUON_REPO" "$GLUON_COMMIT" build/gluon
+          checkout_source "$SITE_REPO" "$SITE_COMMIT" build/site
+          checkout_source "$PACKAGES_REPO" "$PACKAGES_COMMIT" build/packages
+
+          git -C build/site apply --check \
+            "$GITHUB_WORKSPACE/patches/mango-usb-wlan.patch"
+          git -C build/site apply \
+            "$GITHUB_WORKSPACE/patches/mango-usb-wlan.patch"
+
+          ln -s ../site build/gluon/site
+          ln -s ../../packages/ffhal-ssh-keys \
+            build/gluon/package/ffhal-ssh-keys
+
+      - name: Abhaengigkeiten laden und Sicherheitspatch anwenden
+        run: |
+          set -euo pipefail
+          export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          cd build/gluon
+          make update 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/update.log"
+
+          git -C openwrt apply --check \
+            "$GITHUB_WORKSPACE/patches/hostapd-security-2026-1.patch"
+          git -C openwrt apply \
+            "$GITHUB_WORKSPACE/patches/hostapd-security-2026-1.patch"
+
+      - name: Mango-Firmware bauen
+        run: |
+          set -euo pipefail
+          source sources.env
+          export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          cd build/gluon
+
+          make \
+            GLUON_TARGET="$GLUON_TARGET" \
+            GLUON_DEVICES="$GLUON_DEVICES" \
+            GLUON_RELEASE="$GLUON_RELEASE" \
+            GLUON_AUTOUPDATER_ENABLED="$GLUON_AUTOUPDATER_ENABLED" \
+            -j4 V=s 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/build.log"
+
+      - name: Firmware und Pruefsumme sammeln
+        run: |
+          set -euo pipefail
+          source sources.env
+          image="build/gluon/output/images/sysupgrade/gluon-ffhal-${GLUON_RELEASE}-${GLUON_DEVICES}-sysupgrade.bin"
+          test -s "$image"
+          cp "$image" artifacts/
+          cd artifacts
+          sha256sum *.bin > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Ergebnis und Diagnoseprotokolle speichern
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mango-testbuild-${{ github.run_number }}
+          path: artifacts/
+          retention-days: 7
+          if-no-files-found: warn

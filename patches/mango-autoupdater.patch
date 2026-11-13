@@ -1,0 +1,23 @@
+--- a/site.conf
++++ b/site.conf
+@@ -78,8 +78,19 @@
+ 
+ 	autoupdater = {
+ 		enabled = 1,
+-		branch = 'stable',
++		branch = 'mango',
+ 		branches = {
++                        mango = {
++                                name = 'mango',
++                                mirrors = {
++                                        'https://evewot-netizen.github.io/mango-firmware/updates/',
++                                },
++                                good_signatures = 1,
++                                pubkeys = {
++                                        'b9086ad1cb9133c19ab814ff42d7c5a656c3000686a90c878e52011ebeac81e5',
++                                },
++                        },
++
+ 			stable = {
+ 				name = 'stable',
+ 				mirrors = {

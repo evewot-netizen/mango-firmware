@@ -1,0 +1,10 @@
+--- a/image-customization.lua
++++ b/image-customization.lua
+@@ -41,6 +41,7 @@
+ 
+ -- Mango USB-WLAN-Erweiterung
+ if device({'gl-mt300n-v2'}) then
++    features({'tls'})
+     packages({
+         'kmod-usb2',
+         'kmod-usb-ohci',

@@ -66,6 +66,16 @@ jobs:
           git -C build/site apply \
             "$GITHUB_WORKSPACE/patches/mango-usb-wlan.patch"
 
+          git -C build/site apply --check \
+            "$GITHUB_WORKSPACE/patches/mango-tls.patch"
+          git -C build/site apply \
+            "$GITHUB_WORKSPACE/patches/mango-tls.patch"
+
+          git -C build/site apply --check \
+            "$GITHUB_WORKSPACE/patches/mango-autoupdater.patch"
+          git -C build/site apply \
+            "$GITHUB_WORKSPACE/patches/mango-autoupdater.patch"
+
           ln -s ../site build/gluon/site
           ln -s ../../packages/ffhal-ssh-keys \
             build/gluon/package/ffhal-ssh-keys
@@ -94,7 +104,29 @@ jobs:
             GLUON_DEVICES="$GLUON_DEVICES" \
             GLUON_RELEASE="$GLUON_RELEASE" \
             GLUON_AUTOUPDATER_ENABLED="$GLUON_AUTOUPDATER_ENABLED" \
+            GLUON_AUTOUPDATER_BRANCH="$GLUON_AUTOUPDATER_BRANCH" \
             -j4 V=s 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/build.log"
+
+      - name: Update-Manifest erzeugen
+        run: |
+          set -euo pipefail
+          source sources.env
+          export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          cd build/gluon
+
+          make manifest \
+            GLUON_TARGET="$GLUON_TARGET" \
+            GLUON_DEVICES="$GLUON_DEVICES" \
+            GLUON_RELEASE="$GLUON_RELEASE" \
+            GLUON_AUTOUPDATER_BRANCH="$GLUON_AUTOUPDATER_BRANCH" \
+            GLUON_PRIORITY="$GLUON_PRIORITY" \
+            2>&1 | tee "$GITHUB_WORKSPACE/artifacts/manifest.log"
+
+          manifest="output/images/sysupgrade/${GLUON_AUTOUPDATER_BRANCH}.manifest"
+          test -s "$manifest"
+          grep -Fqx "BRANCH=$GLUON_AUTOUPDATER_BRANCH" "$manifest"
+          grep -F -- "$GLUON_RELEASE" "$manifest"
+          cp "$manifest" "$GITHUB_WORKSPACE/artifacts/"
 
       - name: Firmware und Pruefsumme sammeln
         run: |

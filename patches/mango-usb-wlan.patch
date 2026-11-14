@@ -2,7 +2,7 @@ diff --git a/image-customization.lua b/image-customization.lua
 index 4ca68e9..3e17250 100644
 --- a/image-customization.lua
 +++ b/image-customization.lua
-@@ -38,3 +38,16 @@ packages({
+@@ -38,3 +38,18 @@ packages({
      'haveged',
      'iwinfo',
  })
@@ -17,5 +17,7 @@ index 4ca68e9..3e17250 100644
 +        'kmod-rtw88-8821au',
 +        'rtl8821a-firmware',
 +        'wpa-supplicant-mbedtls',
++        'kmod-wireguard',
++        'wireguard-tools',
 +    })
 +end

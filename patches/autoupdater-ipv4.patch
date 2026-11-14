@@ -1,0 +1,21 @@
+--- a/admin/autoupdater/src/uclient.c
++++ b/admin/autoupdater/src/uclient.c
+@@ -9,6 +9,7 @@
+ 
+ #include <limits.h>
+ #include <stdio.h>
++#include <sys/socket.h>
+ #include <string.h>
+ #include <glob.h>
+ 
+@@ -183,6 +184,10 @@
+ 		goto err;
+ 	}
+ 
++	/* Mango: use the IPv4 uplink for firmware downloads. */
++	if (uclient_http_set_address_family(cl, AF_INET))
++		goto err;
++
+ 	cl->priv = &d;
+ 	if (uclient_set_timeout(cl, TIMEOUT_MSEC))
+ 		goto err;

@@ -1,7 +1,17 @@
+
 name: "Mango · Freifunk + USB-WLAN + WireGuard"
 run-name: "Mango · ${{ github.ref_name }} · Build ${{ github.run_number }}"
 
 on:
+  push:
+    branches:
+      - 'mango-test6-wireguard'
+      - 'mango-dev-auto-*'
+    paths:
+      - '.github/workflows/mango-build.yml'
+      - 'sources.env'
+      - 'patches/**'
+
   workflow_dispatch:
 
 permissions:

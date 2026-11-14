@@ -87,6 +87,16 @@ jobs:
           cd build/gluon
           make update 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/update.log"
 
+          git -C packages/gluon apply --check \
+            "$GITHUB_WORKSPACE/patches/autoupdater-https.patch"
+          git -C packages/gluon apply \
+            "$GITHUB_WORKSPACE/patches/autoupdater-https.patch"
+
+          git -C packages/gluon apply --check \
+            "$GITHUB_WORKSPACE/patches/autoupdater-ipv4.patch"
+          git -C packages/gluon apply \
+            "$GITHUB_WORKSPACE/patches/autoupdater-ipv4.patch"
+
           git -C openwrt apply --check \
             "$GITHUB_WORKSPACE/patches/hostapd-security-2026-1.patch"
           git -C openwrt apply \

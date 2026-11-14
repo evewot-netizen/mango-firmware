@@ -1,6 +1,6 @@
 
 name: "Mango · Freifunk + USB-WLAN + WireGuard"
-run-name: "Mango · ${{ github.ref_name }} · Build ${{ github.run_number }}"
+run-name: "Mango · Freifunk + USB-WLAN + WireGuard · Build ${{ github.run_number }}"
 
 on:
   push:

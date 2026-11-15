@@ -6,5 +6,7 @@ mkdir -p /etc/crontabs
 touch /etc/crontabs/root
 job='* * * * * /usr/sbin/mango-management-refresh >/dev/null 2>&1'
 grep -Fxq "$job" /etc/crontabs/root || printf '\n%s\n' "$job" >> /etc/crontabs/root
+job='* * * * * /usr/sbin/mango-management-reconnect >/dev/null 2>&1'
+grep -Fxq "$job" /etc/crontabs/root || printf '\n%s\n' "$job" >> /etc/crontabs/root
 chmod 600 /etc/crontabs/root
 /etc/init.d/cron enable

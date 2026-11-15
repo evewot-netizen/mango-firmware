@@ -1,0 +1,37 @@
+#!/bin/sh
+# Retry only the observed NO_DEVICE startup failure; never restart a healthy peer.
+set -eu
+umask 077
+. /usr/lib/mango-management/common.sh
+test "$(get enabled || true)" = 1 || exit 0
+test "$(uci -q get network.wgverwaltung.proto)" = wireguard || exit 1
+test "$(uci -q get network.wgverwaltung.auto)" = 1 || exit 0
+uplink=$(get uplink_interface)
+case "$uplink" in ''|*[!A-Za-z0-9_]*) exit 1;; esac
+test "$(uci -q get network.wgverwaltung.tunlink)" = "$uplink" || exit 1
+endpoint=$(uci -q get network.wgverwaltung_pi.endpoint_host)
+hostname "$endpoint" || exit 1
+lock=/tmp/mango-management-reconnect.lock
+mkdir "$lock" 2>/dev/null || exit 0
+trap 'rm -rf "$lock"' EXIT
+trap 'exit 1' HUP INT TERM
+ifstatus wgverwaltung > "$lock/tunnel" || exit 1
+field() { jsonfilter -i "$lock/tunnel" -e "@.$1"; }
+test "$(field up)" = false || exit 0
+test "$(field pending)" = false || exit 0
+test "$(field autostart)" = true || exit 0
+jsonfilter -i "$lock/tunnel" -e '@.errors[*].code' | grep -Fxq NO_DEVICE || exit 0
+ifstatus "$uplink" > "$lock/uplink" || exit 1
+test "$(jsonfilter -i "$lock/uplink" -e '@.up')" = true || exit 0
+# Keep the configured hostname for future address changes. No pinned public IP.
+timeout 20 nslookup "$endpoint" > "$lock/dns" 2>&1 || exit 0
+awk '/^Name:/ {answer=1; next} answer && /^Address([[:space:]]|:)/ {found=1} END {exit !found}' "$lock/dns" || exit 0
+# Re-read immediately before mutation; another start may have completed meanwhile.
+ifstatus wgverwaltung > "$lock/tunnel" || exit 1
+test "$(field up)" = false || exit 0
+test "$(field pending)" = false || exit 0
+test "$(field autostart)" = true || exit 0
+jsonfilter -i "$lock/tunnel" -e '@.errors[*].code' | grep -Fxq NO_DEVICE || exit 0
+ubus call network.interface.wgverwaltung notify_proto '{"action":5,"available":true}'
+# action 5 already causes netifd to reevaluate autostart. Avoid a second ifup race.
+logger -t mango-management 'WireGuard-Start nach NO_DEVICE und erfolgreicher DNS-Pruefung erneut freigegeben.'

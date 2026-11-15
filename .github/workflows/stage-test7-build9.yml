@@ -1,0 +1,80 @@
+name: Stage verified Test7 Build9 for signing
+on:
+  push:
+    branches: ['mango-dev-update-control']
+    paths: ['.github/workflows/stage-test7-build9.yml']
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: write
+jobs:
+  stage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Verify source build identity
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const run = (await github.rest.actions.getWorkflowRun({
+              ...context.repo, run_id: 43704739233
+            })).data;
+            if (run.conclusion !== 'success' || run.head_sha !== '815179425d05c0761d140b5c8ea454545de4e1b7') {
+              throw new Error('Unexpected firmware build');
+            }
+            const a = (await github.rest.actions.getArtifact({
+              ...context.repo, artifact_id: 14161617488
+            })).data;
+            if (a.expired || a.workflow_run.id !== run.id ||
+                a.digest !== 'sha256:0f391edde18f91506799a41f7c5b29bd903b190e51517f55c4025946c76d5206') {
+              throw new Error('Unexpected artifact');
+            }
+      - name: Download the exact completed build
+        uses: actions/download-artifact@v4
+        with:
+          name: GL-MT300N-V2-2025.1-halle1-mango-test7-Build-9
+          run-id: 43704739233
+          github-token: ${{ github.token }}
+          path: firmware
+      - name: Stage image and unsigned manifest on a separate branch
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const crypto = require('crypto');
+            const filename = 'gluon-ffhal-2025.1-halle1-mango-test7-gl-mt300n-v2-sysupgrade.bin';
+            const image = fs.readFileSync('firmware/' + filename);
+            const sha = crypto.createHash('sha256').update(image).digest('hex');
+            if (sha !== 'd71a081fe5b26d88f2a1fef2255dfd90199579fd95b9c9d86021a35375a55f4c' || image.length !== 6882116) {
+              throw new Error('Firmware checksum or size mismatch');
+            }
+            const manifest = fs.readFileSync('firmware/mango.manifest', 'utf8');
+            const expected = 'BRANCH=mango\nDATE=2026-11-15 12:21:34+00:00\nPRIORITY=7\n\n' +
+              'gl-mt300n-v2 2025.1-halle1-mango-test7 ' + sha + ' 6882116 ' + filename + '\n';
+            if (manifest !== expected) throw new Error('Unexpected manifest content');
+            const branch = 'mango-release-test7-build9';
+            try {
+              await github.rest.git.getRef({...context.repo, ref: 'heads/' + branch});
+              throw new Error('Staging branch already exists; inspect instead of overwriting');
+            } catch (e) { if (e.status !== 404) throw e; }
+            const base = (await github.rest.git.getRef({...context.repo, ref: 'heads/main'})).data.object.sha;
+            const parent = (await github.rest.git.getCommit({...context.repo, commit_sha: base})).data;
+            const blob = (await github.rest.git.createBlob({...context.repo,
+              content: image.toString('base64'), encoding: 'base64'})).data;
+            const dir = 'release-candidates/test7-build9/';
+            const tree = (await github.rest.git.createTree({...context.repo,
+              base_tree: parent.tree.sha, tree: [
+                {path: dir + filename, mode: '100644', type: 'blob', sha: blob.sha},
+                {path: dir + 'mango.manifest', mode: '100644', type: 'blob', content: manifest},
+                {path: dir + 'README.md', mode: '100644', type: 'blob', content:
+                  '# Test7 Build9 release candidate\n\nFirmware SHA256: `' + sha +
+                  '`\n\nSource build: https://github.com/evewot-netizen/mango-firmware/actions/runs/43704739233\n\n' +
+                  'Manifest is unsigned. This branch is not the live update channel.\n'}
+              ]})).data;
+            const commit = (await github.rest.git.createCommit({...context.repo,
+              message: 'Stage verified Test7 Build9 firmware; signing still required',
+              tree: tree.sha, parents: [base]})).data;
+            await github.rest.git.createRef({...context.repo, ref: 'refs/heads/' + branch, sha: commit.sha});
+            core.info('Staging commit: ' + commit.sha);
+            core.info('Firmware blob: ' + blob.sha);
+            core.info('Main and the live signed manifest were not modified.');

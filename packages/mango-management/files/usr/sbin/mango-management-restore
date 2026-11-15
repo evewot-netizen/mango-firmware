@@ -1,0 +1,29 @@
+#!/bin/sh
+# Recreate only missing management network sections after Gluon's UCI reset.
+set -eu
+umask 077
+. /usr/lib/mango-management/common.sh
+. /usr/lib/mango-management/render.sh
+test "$(get enabled || true)" = 1 || exit 0
+validate_profile
+test -s /etc/wireguard/mango-management.key || fail 'WireGuard-Schluessel fehlt.'
+wg pubkey < /etc/wireguard/mango-management.key >/dev/null || fail 'WireGuard-Schluessel ungueltig.'
+test "$(uci -q get firewall.wgverwaltung.name)" = wgmgmt || fail 'Verwaltungszone fehlt.'
+test "$(uci -q get firewall.wgverwaltung.input)" = DROP || fail 'Input-Schutz fehlt.'
+test "$(uci -q get firewall.wgverwaltung.forward)" = DROP || fail 'Forward-Schutz fehlt.'
+test "$(uci -q get firewall.wgverwaltung.network)" = wgverwaltung || fail 'Zonenzuordnung abweichend.'
+if uci -q get network.wgverwaltung >/dev/null || uci -q get network.wgverwaltung_pi >/dev/null; then
+    test "$(uci -q get network.wgverwaltung.proto)" = wireguard || fail 'Bestehende Schnittstelle weicht ab.'
+    test "$(uci -q get network.wgverwaltung.addresses)" = "$client/32" || fail 'Bestehende Tunneladresse weicht ab.'
+    test "$(uci -q get network.wgverwaltung.tunlink)" = "$uplink" || fail 'Bestehender Uplink weicht ab.'
+    test "$(uci -q get network.wgverwaltung_pi.public_key)" = "$server_key" || fail 'Bestehender Peer weicht ab.'
+    test "$(uci -q get network.wgverwaltung_pi.allowed_ips)" = "$server/32" || fail 'Bestehende Peer-Adressen weichen ab.'
+    test "$(uci -q get network.wgverwaltung.private_key)" = "$(cat /etc/wireguard/mango-management.key)" || fail 'Bestehender Schluessel weicht ab.'
+    echo 'Verwaltungstunnel bereits passend konfiguriert.'
+    exit 0
+fi
+# During Gluon upgrade other network changes are pending. Do not revert or commit
+# them here; 998-commit owns the transaction after this 997 hook.
+render_network | uci batch
+uci set network.wgverwaltung.private_key="$(cat /etc/wireguard/mango-management.key)"
+echo 'Verwaltungsnetz wiederhergestellt; Gluon uebernimmt den Commit.'

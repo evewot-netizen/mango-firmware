@@ -35,8 +35,16 @@ class SecurityTests(unittest.TestCase):
             'firewall.mango_fritz_v6.target': 'REJECT',
             'firewall.mango_fritz_v6.dest_ip': 'fe80::1 fd12:3456::1',
         }
+        for family in (4, 6):
+            prefix = f'firewall.mango_fritz_v{family}.'
+            self.state.update({prefix+'target': 'REJECT', prefix+'dest': 'wan',
+                               prefix+'proto': 'tcp', prefix+'dest_port': '80 443 49000 49443'})
+        self.state['firewall.mango_fritz_v4.dest_ip'] = '192.168.50.1 169.254.1.1'
+        self.tool('ifstatus', '#!/bin/sh\nprintf "{}\\n"\n')
+        self.tool('jsonfilter', '#!/bin/sh\ncase "$*" in *"@.up"*) echo true;; *) echo phy1-sta0;; esac\n')
+        self.tool('ip', '#!/bin/sh\ncase "$*" in "-4 route show default dev phy1-sta0") echo "default via 192.168.50.1 dev phy1-sta0";; "-6 route show default dev phy1-sta0") echo "default via fe80::1 dev phy1-sta0";; *) exit 1;; esac\n')
         self.write_state()
-        self.tool('uci', '''#!/usr/bin/env python3
+        self.tool('uci' , '''#!/usr/bin/env python3
 import json,os,sys
 s=json.load(open(os.environ['STATE']))
 a=sys.argv[1:]

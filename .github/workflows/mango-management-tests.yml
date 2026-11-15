@@ -1,0 +1,20 @@
+name: Mango management tests
+on:
+  push:
+    branches: ['mango-dev-update-control']
+    paths: ['management/**', '.github/workflows/mango-management-tests.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Test update preparation and existing security rules
+        run: |
+          python3 -m unittest discover -s management/tests -v
+          python3 -m unittest discover -s tests -v

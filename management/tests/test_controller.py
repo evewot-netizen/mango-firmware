@@ -22,7 +22,7 @@ class ControllerTests(unittest.TestCase):
         self.c=self.controller
         self.c.s={'phase':'CHECKING','started':time.time()}
         self.hash='a'*64
-        self.job={'STATE':'READY','SHA256':self.hash,'VERSION':'test6','BOOT_ID':'old-boot'}
+        self.job={'STATE':'READY','SHA256':self.hash,'VERSION':'test6','BOOT_ID':'old-boot','INSTALL_ENABLED':'1'}
         self.c.job=Mock(return_value=self.job)
         self.c.target_version=Mock(return_value='test7')
         self.c.ssh=Mock(return_value='STATE=INSTALL_QUEUED\n')
@@ -47,9 +47,10 @@ class ControllerTests(unittest.TestCase):
 
     def test_backup_failure_blocks_installation(self):
         self.c.s['phase']='BACKUP_REQUIRED'
+        self.c.ssh.return_value='HEALTH=OK\n'
         self.c.backup=Mock(side_effect=RuntimeError('Backup failed'))
         self.assertEqual(self.c.execute('tick')['phase'],'ERROR')
-        self.c.ssh.assert_not_called()
+        self.c.ssh.assert_called_once_with('health')
 
     def test_activation_disabled_blocks_installation(self):
         self.stage_install();self.config['installation_enabled']=False
@@ -63,6 +64,11 @@ class ControllerTests(unittest.TestCase):
 
     def test_changed_candidate_blocks_installation(self):
         self.stage_install();self.c.job.return_value=dict(self.job,SHA256='b'*64)
+        self.assertEqual(self.c.execute('tick')['phase'],'ERROR')
+        self.c.ssh.assert_not_called()
+
+    def test_changed_release_approval_blocks_installation(self):
+        self.stage_install();self.c.target_version.side_effect=RuntimeError('channel changed')
         self.assertEqual(self.c.execute('tick')['phase'],'ERROR')
         self.c.ssh.assert_not_called()
 
@@ -86,9 +92,16 @@ class ControllerTests(unittest.TestCase):
     def test_two_healthy_checks_required(self):
         self.stage_install();self.c.s.update(phase='INSTALLING',install_started=time.time())
         self.c.job.return_value=dict(self.job,STATE='IDLE',VERSION='test7',BOOT_ID='new-boot')
-        self.c.ssh.side_effect=lambda command,**kw: 'Verbunden\n' if command=='vpn' else 'Aktiv\n1/0\n'
+        self.c.ssh.side_effect=lambda command,**kw: {'health':'HEALTH=OK\n','vpn':'Verbunden\n','details':'Aktiv\n1/0\n'}[command]
         self.assertEqual(self.c.execute('tick')['phase'],'INSTALLING')
         self.assertEqual(self.c.execute('tick')['phase'],'SUCCESS')
+
+    def test_missing_firewall_health_blocks_success(self):
+        self.stage_install();self.c.s.update(phase='INSTALLING',install_started=time.time(),healthy_checks=1)
+        self.c.job.return_value=dict(self.job,STATE='IDLE',VERSION='test7',BOOT_ID='new-boot')
+        self.c.ssh.side_effect=lambda command,**kw: {'health':'HEALTH=BAD','vpn':'Verbunden\n','details':'Aktiv\n1/0\n'}[command]
+        self.assertEqual(self.c.execute('tick')['phase'],'INSTALLING')
+        self.assertEqual(self.c.s['healthy_checks'],0)
 
     def test_error_cannot_be_restarted_by_daily_trigger(self):
         self.c.s['phase']='ERROR'

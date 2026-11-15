@@ -40,6 +40,7 @@ REQUIRED = {
     'etc/mango-ha-backup.sh', 'etc/mango-ha-monitor.sh',
     'etc/mango-ha-update.sh', 'etc/mango-ha-update-worker.sh',
     'etc/mango-ha-update-install.sh', 'etc/init.d/mango-ha-update-job',
+    'etc/mango-ha-update-install-enabled',
     'etc/mango-fritz-adressen.sh', 'etc/hotplug.d/iface/95-mango-fritz',
     'etc/crontabs/root', 'etc/sysupgrade.conf',
     'lib/gluon/upgrade/zz-heimwlan',
@@ -93,7 +94,7 @@ class Controller:
         values = {}
         # Parse only the machine-readable header, never the updater log below it.
         for line in text.splitlines():
-            if not re.match(r'^(STATE|VERSION|BOOT_ID|SHA256)=', line):
+            if not re.match(r'^(STATE|VERSION|BOOT_ID|SHA256|INSTALL_ENABLED)=', line):
                 break
             name, value = line.split('=', 1)
             if name in values:
@@ -239,6 +240,8 @@ class Controller:
                 return self.result('Router prueft noch.')
             if job['STATE'] != 'READY' or not HASH.fullmatch(job.get('SHA256', '')):
                 raise RuntimeError('Router hat keine eindeutig gepruefte Firmware bereitgestellt')
+            if self.c.get('installation_enabled') and job.get('INSTALL_ENABLED') != '1':
+                raise RuntimeError('Installationszugang auf dem Router ist nicht aktiviert')
             target = self.target_version(job['SHA256'])
             if target == job['VERSION']:
                 raise RuntimeError('Zielversion entspricht bereits installierter Version')
@@ -247,6 +250,8 @@ class Controller:
             self.save()
             return self.result('Neue Firmware geprueft; Backup ist der naechste Schritt.')
         if phase == 'BACKUP_REQUIRED':
+            if self.ssh('health').strip() != 'HEALTH=OK':
+                raise RuntimeError('Router-Sicherheitspruefung vor Backup fehlgeschlagen')
             path, digest = self.backup()
             self.s.update(backup_path=path, backup_sha=digest)
             self.s['phase'] = 'INSTALL_READY' if self.c.get('installation_enabled') else 'AWAITING_ACTIVATION'
@@ -258,6 +263,8 @@ class Controller:
                 self.s['phase']='AWAITING_ACTIVATION';self.save()
                 return self.result('Installation deaktiviert.')
             self.check_backup(self.s['backup_path'], self.s['backup_sha'])
+            if self.target_version(self.s['image_sha']) != self.s['target_version']:
+                raise RuntimeError('Firmware-Freigabe hat sich seit der Vorbereitung geaendert')
             job=self.job()
             if job['STATE']!='READY' or job.get('SHA256')!=self.s['image_sha'] or job['BOOT_ID']!=self.s['old_boot'] or job['VERSION']!=self.s['old_version']:
                 raise RuntimeError('Bereitgelegte Firmware oder Routerzustand hat sich geaendert')
@@ -284,12 +291,16 @@ class Controller:
             if job['VERSION']!=self.s['target_version']:
                 raise RuntimeError('Router mit unerwarteter Firmware-Version zurueckgekehrt')
             # SSH itself traverses WireGuard. Check Freifunk and mesh separately.
+            try:
+                guards_ok=self.ssh('health').strip()=='HEALTH=OK'
+            except (RuntimeError, subprocess.TimeoutExpired):
+                guards_ok=False
             vpn=self.ssh('vpn',key='monitor_key').strip()
             details=self.ssh('details',key='monitor_key').splitlines()
-            if vpn!='Verbunden' or not details or details[0]!='Aktiv':
+            if not guards_ok or vpn!='Verbunden' or not details or details[0]!='Aktiv':
                 if self.s.get('healthy_checks'):
                     self.s['healthy_checks']=0; self.save()
-                return self.result('Router zurueck; Freifunk oder Mesh noch nicht bereit.')
+                return self.result('Router zurueck; Sicherheitspruefung, Freifunk oder Mesh noch nicht bereit.')
             self.s['healthy_checks']=self.s.get('healthy_checks',0)+1
             if self.s['healthy_checks']>=2:
                 self.s.update(phase='SUCCESS', finished=time.time())

@@ -1,0 +1,63 @@
+shell_command:
+  mango_update_start: "python3 /config/freifunk/mango-update-controller.py start"
+  mango_update_schritt: "python3 /config/freifunk/mango-update-controller.py tick"
+  mango_update_status: "python3 /config/freifunk/mango-update-controller.py status"
+
+automation:
+  - id: mango_zuhause_kontrolliertes_nachtupdate
+    alias: "Mango Zuhause – kontrolliertes Nachtupdate"
+    description: "04:15 pruefen; nur bei neuer Firmware sichern und aktualisieren."
+    triggers:
+      - trigger: time
+        at: "04:15:00"
+        id: nacht
+      - trigger: time_pattern
+        minutes: "*"
+        seconds: "30"
+        id: fortschritt
+    conditions: []
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: nacht
+            sequence:
+              - action: shell_command.mango_update_start
+                response_variable: ergebnis
+                continue_on_error: true
+        default:
+          - action: shell_command.mango_update_schritt
+            response_variable: ergebnis
+            continue_on_error: true
+      - variables:
+          antwort: "{{ ergebnis | default({}) }}"
+          inhalt: "{{ antwort.get('stdout', '{}') | from_json({}) }}"
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: >-
+                  {{ antwort.get('returncode', -1) != 0
+                     or inhalt is not mapping
+                     or inhalt.get('phase', '') == '' }}
+            sequence:
+              - action: persistent_notification.create
+                data:
+                  notification_id: mango_zuhause_update_status
+                  title: "Mango-Update: Steuerung pruefen"
+                  message: >-
+                    Die Pi-Steuerung hat keine gueltige Antwort geliefert.
+                    Bitte den Automationsablauf pruefen. Es wird kein
+                    Installationsauftrag automatisch wiederholt.
+          - conditions:
+              - condition: template
+                value_template: "{{ inhalt.get('notify', false) }}"
+            sequence:
+              - action: persistent_notification.create
+                data:
+                  notification_id: mango_zuhause_update_status
+                  title: >-
+                    {{ 'Mango-Update erfolgreich' if inhalt.get('phase') == 'SUCCESS'
+                       else 'Mango-Update angehalten' }}
+                  message: "{{ inhalt.get('message', 'Bitte Update-Status pruefen.') }}"
+    mode: single
+    max_exceeded: silent

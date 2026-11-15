@@ -46,9 +46,9 @@ There is no automatic rollback guarantee after flash begins. The normal Gluon
 hooks deliberately stop networking before sysupgrade. This phase has only been
 mock-tested; no real flash has been validated.
 
-Still required: hardware validation of the Pi flow, firewall-specific postflight
-checks, notifications, sequential multi-router handling, and activation of the
-complete HA schedule. No unattended rollout is enabled.
+Final activation installers below complete the single-router schedule and
+health checks. Still required: user-side activation, first real update validation,
+and a shared queue before enrolling additional routers.
 
 Tests: `python3 -m unittest discover -s management/tests -v`.
 
@@ -64,8 +64,7 @@ Each invocation performs at most one bounded step. Persistent state and a file
 lock prevent overlapping controllers; the INSTALLING state is committed before
 sending the install request, so a lost acknowledgement never triggers a repeat.
 After reboot it checks the expected release, changed boot ID, WireGuard SSH,
-Freifunk VPN and mesh twice. Router firewall-specific postflight checks and
-schedule/notifications/activation still need completion before unattended use.
+Freifunk VPN and mesh twice. The final activation stage below adds router health checks and the schedule.
 
 The controller fetches release metadata over HTTPS and requires the image hash
 to match the router's signed-manifest-verified candidate. A changed channel
@@ -76,3 +75,29 @@ ordered by filesystem modification time (not timezone-dependent filenames).
 The backup SHA is passed together with the exact image SHA. Missing or changed
 backups, changed candidates, wrong post-reboot versions and timeouts stop the
 flow. ERROR and uncertain installation never automatically restart a rollout.
+
+## Final activation for Mango Zuhause
+
+`install-router-final.sh` updates the dispatcher with `health`, verifies the live
+IPv4/IPv6 REJECT rules on all configured FRITZ addresses and ports, Cron,
+WireGuard uplink and a recent handshake. Only on success does it create the
+installation activation flag and add that flag to sysupgrade.conf. On failed
+health it restores the previous dispatcher. This installer itself never flashes.
+
+`install-pi-nightly.sh` requires the previously verified idle Pi/router states,
+unchanged initial Pi configuration, a passing remote health check and router
+activation. It backs up all replaced Pi files, installs the extended controller
+and nightly HA package, runs `ha core check`, and only then enables installation
+in the Pi configuration. Reload shell commands and automations to activate.
+The package is for Mango Zuhause only; additional routers need explicit profiles
+and a shared rollout queue before they are enrolled.
+
+The nightly trigger is 04:15 in HA's timezone. The progress trigger is at second
+30 each minute; inactive states only read the local state file and make no SSH
+connection or backup. Only a READY update leads to a backup, and an ERROR halts
+further nightly starts until reviewed. Persistent HA notifications report errors
+and successful post-update checks. The current channel approval/hash is checked
+again immediately before installation. Router health is checked before backup
+and twice after reboot together with expected release, VPN and mesh. The
+activation flag is now explicitly retained by the final setup and required in
+backups. No real firmware flash has yet been validated on the target device.

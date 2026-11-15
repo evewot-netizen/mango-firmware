@@ -52,6 +52,8 @@ esac
             '/var/lock': str(self.locks),
             '/tmp/firmware.bin': str(self.image),
             '/lib/gluon/release': str(self.version),
+            '/etc/init.d/cron': str(self.base / 'cron'),
+            '/etc/mango-fritz-adressen.sh': str(self.base / 'address-check'),
             '/usr/sbin/autoupdater': str(self.updater),
             'uci -q': f'{self.uci} -q',
         }
@@ -121,6 +123,27 @@ esac
         r=self.run_script('dispatch.sh','check')
         self.assertNotEqual(r.returncode,0)
         self.assertFalse(Path(str(self.image)+'.args').exists())
+
+    def health_fixture(self):
+        self.uci.write_text(self.uci.read_text().replace(' *) exit 1;;', ' network.wgverwaltung.tunlink) echo wan;;\n firewall.mango_fritz_v4.target|firewall.mango_fritz_v6.target) echo REJECT;;\n firewall.mango_fritz_v4.dest_ip) echo 192.0.2.1;;\n firewall.mango_fritz_v6.dest_ip) echo 2001:db8::1;;\n *) exit 1;;'))
+        for name in ['cron','address-check']:
+            p=self.base/name;p.write_text('#!/bin/sh\nexit 0\n');p.chmod(0o700)
+        for name,body in [('wg','echo "peer $(date +%s)"'),('iptables','exit 0'),('ip6tables','exit 0')]:
+            p=self.base/name;p.write_text('#!/bin/sh\n'+body+'\n');p.chmod(0o700)
+        self.env['PATH']=str(self.base)+':'+self.env['PATH']
+
+    def test_router_health_checks_active_rules(self):
+        self.health_fixture()
+        r=self.run_script('dispatch.sh','health')
+        self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual(r.stdout,'HEALTH=OK\n')
+
+    def test_missing_ipv6_rule_fails_health(self):
+        self.health_fixture()
+        (self.base/'ip6tables').write_text('#!/bin/sh\nexit 1\n')
+        r=self.run_script('dispatch.sh','health')
+        self.assertNotEqual(r.returncode,0)
+        self.assertIn('nicht gesperrt',r.stderr)
 
     def test_shell_syntax(self):
         for p in [*(ROOT/'router').iterdir(),ROOT/'install-router-prepare.sh']:

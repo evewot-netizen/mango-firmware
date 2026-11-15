@@ -27,6 +27,7 @@ class SecurityTests(unittest.TestCase):
             'mango_management.main.gateway_ipv4': '192.168.50.1',
             'mango_management.main.gateway_ipv6': 'fe80::1 fd12:3456::1',
             'mango_management.main.uplink_zone': 'wan',
+            'mango_management.main.uplink_interface': 'wan',
             'mango_management.main.endpoint_port': '51820',
             'mango_management.main.monitor_public_key': 'ssh-ed25519 '+ 'A'*68 + ' test',
             'mango_management.main.enabled': '1',
@@ -86,12 +87,21 @@ else:
         self.assertNotIn('firewall.mango_fritz_v4.src',r.stdout)
         self.assertNotIn('=forwarding',r.stdout)
 
+    def test_endpoint_route_uses_configured_uplink(self):
+        for uplink in ['wan', 'private_uplink']:
+            self.state['mango_management.main.uplink_interface'] = uplink
+            result = self.render()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f"set network.wgverwaltung.tunlink='{uplink}'", result.stdout)
+
     def test_bad_profiles_produce_no_batch(self):
         for field,value in [('endpoint_host',"vpn.example.net'; reboot"),
                             ('gateway_ipv4','999.2.3.4'),
                             ('gateway_ipv6',':::'),
                             ('gateway_ipv6','1::2:3:4:5:6:7:8'),
                             ('uplink_zone',"wan\nset firewall.x=forwarding"),
+                            ('uplink_interface',"wan'; reboot"),
+                            ('uplink_interface',''),
                             ('endpoint_port','65536'),
                             ('server_public_key','bad'),
                             ('monitor_public_key','ssh-ed25519 AAA\nssh-ed25519 BBB'),

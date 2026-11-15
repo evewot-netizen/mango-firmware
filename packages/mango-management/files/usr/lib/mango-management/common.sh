@@ -36,6 +36,8 @@ validate_profile() {
     gateways6=$(get gateway_ipv6) || fail 'IPv6-Gatewayadressen fehlen (vorher ermitteln).'
     test -n "$gateways6" || fail 'IPv6-Gatewayadressen fehlen.'
     for address in $gateways6; do ipv6 "$address" || fail 'Ungueltige IPv6-Adresse.'; done
+    uplink=$(get uplink_interface) || fail 'Uplink-Schnittstelle fehlt.'
+    case "$uplink" in ''|*[!A-Za-z0-9_]*) fail 'Ungueltige Uplink-Schnittstelle.';; esac
     zone=$(get uplink_zone) || fail 'Uplink-Zone fehlt.'
     case "$zone" in ''|*[!A-Za-z0-9_]*) fail 'Ungueltige Uplink-Zone.';; esac
     port=$(get endpoint_port) || fail 'Endpoint-Port fehlt.'

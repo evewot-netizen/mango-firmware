@@ -6,6 +6,7 @@ set network.wgverwaltung=interface
 set network.wgverwaltung.proto=wireguard
 set network.wgverwaltung.auto=1
 set network.wgverwaltung.mtu=1420
+set network.wgverwaltung.tunlink='$uplink'
 add_list network.wgverwaltung.addresses='$client/32'
 set network.wgverwaltung_pi=wireguard_wgverwaltung
 set network.wgverwaltung_pi.public_key='$server_key'

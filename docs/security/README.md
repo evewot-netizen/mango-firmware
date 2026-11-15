@@ -109,3 +109,13 @@ Danach ist ein Test auf einem separaten Mango erforderlich. Kein automatisches F
 jetzt mit Schreibrechten eingerichtet. Diese Fassung wird auf dem separaten
 Entwicklungsbranch gebaut; den aktuellen Buildstatus zeigt GitHub Actions.
 Noch kein Hardwaretest und keine Freigabe fuer automatische Updates.
+
+### WireGuard-Uplink
+
+Die Einrichtung bindet die WireGuard-Endpoint-Route mit `tunlink` an die
+logische Schnittstelle `uplink_interface` (Standard `wan`). So soll netifd
+den Endpoint nicht ueber die Freifunk-Ersatzroute erreichen. Auf dem
+bestehenden Mango wurde eine zuvor verbliebene falsche Einzelroute gezielt
+entfernt; der anschliessende Neustarttest bestaetigte den Heimnetzweg und
+einen frischen Handshake. Die neue Firmware selbst ist damit noch nicht
+auf Hardware getestet.

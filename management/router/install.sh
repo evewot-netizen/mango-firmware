@@ -18,7 +18,7 @@ fail_cleanup() {
         if test "$started_hooks" = 1; then
             for hook in /usr/lib/autoupdater/abort.d/*; do
                 test -f "$hook" && test -x "$hook" || continue
-                "$hook" || true
+                "$hook" 8>&- 9>&- || true
             done
         fi
     fi
@@ -52,7 +52,7 @@ exec 8> /var/lock/autoupdater.lock
 flock -n 8
 # No --force, no -n and no compatibility override: keep configuration and
 # refuse an incompatible image even if the earlier native dry-run allowed it.
-/sbin/sysupgrade --test "$state/firmware.bin"
+/sbin/sysupgrade --test "$state/firmware.bin" 8>&- 9>&-
 # This receipt is an audit record. The Pi must verify the backup before sending
 # its hash; a hash alone cannot prove that a remote archive was safely stored.
 {
@@ -67,7 +67,7 @@ started_hooks=1
 for dir in /usr/lib/autoupdater/download.d /usr/lib/autoupdater/upgrade.d; do
     for hook in "$dir"/*; do
         test -f "$hook" && test -x "$hook" || continue
-        "$hook"
+        "$hook" 8>&- 9>&-
     done
 done
 sync

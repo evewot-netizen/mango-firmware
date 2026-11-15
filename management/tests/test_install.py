@@ -109,6 +109,20 @@ exit 0
         self.assertEqual(sum(x.startswith('sysupgrade') for x in lines),1)
         self.assertEqual((self.state/'state').read_text().strip(),'ERROR')
 
+    def test_abort_daemon_does_not_keep_install_locks(self):
+        self.env['FAIL_HOOK']='1'
+        hook=self.base/'abort.d/10test'
+        hook.write_text(hook.read_text()+'sleep 60 >/dev/null 2>&1 &\necho $! > "$CALLS.daemon"\n')
+        try:
+            self.assertNotEqual(self.run_worker().returncode,0)
+            for name in ['mango-ha-update-job.lock','autoupdater.lock']:
+                r=subprocess.run(['flock','-n',str(self.base/'locks'/name),'true'])
+                self.assertEqual(r.returncode,0,name)
+        finally:
+            pidfile=self.base/'calls.daemon'
+            if pidfile.exists():
+                os.kill(int(pidfile.read_text()),15)
+
     def test_generated_installer_matches_sources(self):
         for name in ['worker.sh','service','dispatch.sh','install.sh']:
             self.assertIn((ROOT/'router'/name).read_text(),(ROOT/'install-router-control.sh').read_text())

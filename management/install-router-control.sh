@@ -58,7 +58,8 @@ if test -e /tmp/firmware.bin; then
     echo 'Existing /tmp/firmware.bin: refusing to overwrite it.'
     exit 1
 fi
-if ! /usr/sbin/autoupdater --branch mango --force --no-action > "$state/check.log" 2>&1; then
+# Keep the lock in this worker; restarted daemons must not inherit it.
+if ! /usr/sbin/autoupdater --branch mango --force --no-action 9>&- > "$state/check.log" 2>&1; then
     cat "$state/check.log"
     exit 1
 fi
@@ -165,8 +166,8 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
         printf '%s\n' QUEUED > "$state/state"
         flock -u 9
         exec 9>&-
-        /etc/init.d/mango-ha-update-job stop >/dev/null 2>&1 || true
-        if ! /etc/init.d/mango-ha-update-job start; then
+        /etc/init.d/mango-ha-update-job stop 7>&- >/dev/null 2>&1 || true
+        if ! /etc/init.d/mango-ha-update-job start 7>&-; then
             printf '%s\n' ERROR > "$state/state"
             exit 1
         fi
@@ -194,8 +195,8 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
         printf '%s\n' INSTALL_QUEUED > "$state/state"
         flock -u 9
         exec 9>&-
-        /etc/init.d/mango-ha-update-job stop >/dev/null 2>&1 || true
-        if ! /etc/init.d/mango-ha-update-job start; then
+        /etc/init.d/mango-ha-update-job stop 7>&- >/dev/null 2>&1 || true
+        if ! /etc/init.d/mango-ha-update-job start 7>&-; then
             printf '%s\n' ERROR > "$state/state"
             exit 1
         fi
@@ -226,7 +227,7 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
         case "$(cat "$state/state" 2>/dev/null || true)" in
             QUEUED|PREPARING|READY|INSTALL_QUEUED|INSTALLING) echo 'Background job already present.' >&2; exit 1;;
         esac
-        /usr/sbin/autoupdater --branch mango --force --no-action
+        /usr/sbin/autoupdater --branch mango --force --no-action 9>&-
         ;;
     *)
         echo 'Allowed commands: status, health, check, prepare, job and gated install IMAGE_SHA256 BACKUP_SHA256.' >&2
@@ -256,7 +257,7 @@ fail_cleanup() {
         if test "$started_hooks" = 1; then
             for hook in /usr/lib/autoupdater/abort.d/*; do
                 test -f "$hook" && test -x "$hook" || continue
-                "$hook" || true
+                "$hook" 8>&- 9>&- || true
             done
         fi
     fi
@@ -290,7 +291,7 @@ exec 8> /var/lock/autoupdater.lock
 flock -n 8
 # No --force, no -n and no compatibility override: keep configuration and
 # refuse an incompatible image even if the earlier native dry-run allowed it.
-/sbin/sysupgrade --test "$state/firmware.bin"
+/sbin/sysupgrade --test "$state/firmware.bin" 8>&- 9>&-
 # This receipt is an audit record. The Pi must verify the backup before sending
 # its hash; a hash alone cannot prove that a remote archive was safely stored.
 {
@@ -305,7 +306,7 @@ started_hooks=1
 for dir in /usr/lib/autoupdater/download.d /usr/lib/autoupdater/upgrade.d; do
     for hook in "$dir"/*; do
         test -f "$hook" && test -x "$hook" || continue
-        "$hook"
+        "$hook" 8>&- 9>&-
     done
 done
 sync

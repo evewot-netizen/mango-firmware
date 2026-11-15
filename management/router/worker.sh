@@ -35,7 +35,8 @@ if test -e /tmp/firmware.bin; then
     echo 'Existing /tmp/firmware.bin: refusing to overwrite it.'
     exit 1
 fi
-if ! /usr/sbin/autoupdater --branch mango --force --no-action > "$state/check.log" 2>&1; then
+# Keep the lock in this worker; restarted daemons must not inherit it.
+if ! /usr/sbin/autoupdater --branch mango --force --no-action 9>&- > "$state/check.log" 2>&1; then
     cat "$state/check.log"
     exit 1
 fi

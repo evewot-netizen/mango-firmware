@@ -80,6 +80,30 @@ esac
         self.assertFalse(self.image.exists())
         self.assertEqual((self.state/'old-version').read_text(),'test6\n')
 
+    def test_restarted_daemon_does_not_keep_worker_lock(self):
+        # Reproduce a daemon launched by an updater abort hook, surviving exit.
+        self.env['RESULT']='ready'
+        self.env['TEST_LOCK']=str(self.locks/'mango-ha-update-job.lock')
+        original=self.updater.read_text()
+        self.updater.write_text(original.replace('case "$RESULT" in', """
+if flock -n "$TEST_LOCK" -c true; then
+    echo 'Parent worker released its lock during download' >&2
+    exit 1
+fi
+sleep 60 >/dev/null 2>&1 &
+echo $! > "$TEST_IMAGE.daemon"
+case "$RESULT" in"""))
+        try:
+            r=self.run_script('worker.sh')
+            self.assertEqual(r.returncode,0,r.stderr)
+            self.assertEqual((self.state/'state').read_text().strip(),'READY')
+            lock=subprocess.run(['flock','-n',self.env['TEST_LOCK'],'true'])
+            self.assertEqual(lock.returncode,0,'Restarted daemon inherited update lock')
+        finally:
+            pidfile=Path(str(self.image)+'.daemon')
+            if pidfile.exists():
+                os.kill(int(pidfile.read_text()),15)
+
     def test_failure_and_unknown_outputs_fail_closed(self):
         for result in ['error','missing','ambiguous','other']:
             with self.subTest(result=result):

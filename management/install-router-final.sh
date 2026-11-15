@@ -73,8 +73,8 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
         printf '%s\n' QUEUED > "$state/state"
         flock -u 9
         exec 9>&-
-        /etc/init.d/mango-ha-update-job stop >/dev/null 2>&1 || true
-        if ! /etc/init.d/mango-ha-update-job start; then
+        /etc/init.d/mango-ha-update-job stop 7>&- >/dev/null 2>&1 || true
+        if ! /etc/init.d/mango-ha-update-job start 7>&-; then
             printf '%s\n' ERROR > "$state/state"
             exit 1
         fi
@@ -102,8 +102,8 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
         printf '%s\n' INSTALL_QUEUED > "$state/state"
         flock -u 9
         exec 9>&-
-        /etc/init.d/mango-ha-update-job stop >/dev/null 2>&1 || true
-        if ! /etc/init.d/mango-ha-update-job start; then
+        /etc/init.d/mango-ha-update-job stop 7>&- >/dev/null 2>&1 || true
+        if ! /etc/init.d/mango-ha-update-job start 7>&-; then
             printf '%s\n' ERROR > "$state/state"
             exit 1
         fi
@@ -134,7 +134,7 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
         case "$(cat "$state/state" 2>/dev/null || true)" in
             QUEUED|PREPARING|READY|INSTALL_QUEUED|INSTALLING) echo 'Background job already present.' >&2; exit 1;;
         esac
-        /usr/sbin/autoupdater --branch mango --force --no-action
+        /usr/sbin/autoupdater --branch mango --force --no-action 9>&-
         ;;
     *)
         echo 'Allowed commands: status, health, check, prepare, job and gated install IMAGE_SHA256 BACKUP_SHA256.' >&2

@@ -1,0 +1,4 @@
+shell_command:
+  mango_update_start: "python3 /config/freifunk/mango-update-controller.py start"
+  mango_update_schritt: "python3 /config/freifunk/mango-update-controller.py tick"
+  mango_update_status: "python3 /config/freifunk/mango-update-controller.py status"

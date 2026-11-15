@@ -1,0 +1,13 @@
+{
+  "installation_enabled": false,
+  "host": "172.30.33.2",
+  "port": 2222,
+  "host_key_alias": "192.168.178.20",
+  "known_hosts": "/config/freifunk/ssh/known_hosts_mango",
+  "update_key": "/config/freifunk/ssh/mango_zuhause_update",
+  "backup_key": "/config/freifunk/ssh/mango_zuhause_backup",
+  "monitor_key": "/config/freifunk/ssh/mango_monitor",
+  "manifest_url": "https://evewot-netizen.github.io/mango-firmware/updates/mango.manifest",
+  "backup_dir": "/config/freifunk/backups/mango-zuhause/automatisch",
+  "state_file": "/config/freifunk/update-status/mango-zuhause.json"
+}

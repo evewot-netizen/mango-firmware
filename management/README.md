@@ -46,8 +46,33 @@ There is no automatic rollback guarantee after flash begins. The normal Gluon
 hooks deliberately stop networking before sysupgrade. This phase has only been
 mock-tested; no real flash has been validated.
 
-Still required: Pi backup verification/receipt binding, target release tracking,
-bounded polling, post-reboot checks, notifications, sequential router handling,
-and activation of the complete HA schedule. No unattended rollout is enabled.
+Still required: hardware validation of the Pi flow, firewall-specific postflight
+checks, notifications, sequential multi-router handling, and activation of the
+complete HA schedule. No unattended rollout is enabled.
 
 Tests: `python3 -m unittest discover -s management/tests -v`.
+
+## Pi controller (not yet scheduled/activated)
+
+`install-pi-control.sh` installs the standard-library Python controller, a local
+configuration and three HA shell commands: `mango_update_start`,
+`mango_update_schritt`, `mango_update_status`. It checks HA configuration and
+creates no automation. `installation_enabled` is false. The router activation
+flag also remains absent. The controller executes inside HA Core, not core-ssh.
+
+Each invocation performs at most one bounded step. Persistent state and a file
+lock prevent overlapping controllers; the INSTALLING state is committed before
+sending the install request, so a lost acknowledgement never triggers a repeat.
+After reboot it checks the expected release, changed boot ID, WireGuard SSH,
+Freifunk VPN and mesh twice. Router firewall-specific postflight checks and
+schedule/notifications/activation still need completion before unattended use.
+
+The controller fetches release metadata over HTTPS and requires the image hash
+to match the router's signed-manifest-verified candidate. A changed channel
+fails closed. Backup downloads are bounded to 30 seconds/16 MiB, archive contents
+to 32 MiB, and required files include all new update helpers. Backups are verified
+again before installation; only the latest three successful archives are kept,
+ordered by filesystem modification time (not timezone-dependent filenames).
+The backup SHA is passed together with the exact image SHA. Missing or changed
+backups, changed candidates, wrong post-reboot versions and timeouts stop the
+flow. ERROR and uncertain installation never automatically restart a rollout.

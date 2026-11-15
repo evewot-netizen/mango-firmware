@@ -11,6 +11,8 @@ on:
       - '.github/workflows/mango-build.yml'
       - 'sources.env'
       - 'patches/**'
+      - 'packages/mango-management/**'
+      - 'tests/**'
 
   workflow_dispatch:
 
@@ -35,6 +37,9 @@ jobs:
         uses: actions/checkout@v6
         with:
           persist-credentials: false
+
+      - name: Sicherheitsvorlage pruefen
+        run: python3 -m unittest discover -s tests -v
 
       - name: Firmware-Version fuer den Downloadnamen lesen
         id: firmware
@@ -94,6 +99,7 @@ jobs:
           git -C build/site apply \
             "$GITHUB_WORKSPACE/patches/mango-autoupdater.patch"
 
+          cp -a packages/mango-management build/gluon/package/mango-management
           ln -s ../site build/gluon/site
           ln -s ../../packages/ffhal-ssh-keys \
             build/gluon/package/ffhal-ssh-keys

@@ -1,0 +1,46 @@
+#!/bin/sh
+set -eu
+umask 077
+. /usr/lib/mango-management/common.sh
+test "$(get enabled || true)" = 1 || exit 0
+lock=/tmp/mango-management-refresh.lock
+mkdir "$lock" 2>/dev/null || exit 0
+trap 'rm -rf "$lock"' EXIT
+trap 'exit 1' HUP INT TERM
+error() { logger -t mango-management "$*"; fail "$*"; }
+# Never commit somebody else's pending firewall edits.
+test -z "$(uci changes firewall)" || error 'Firewall-Aenderungen offen; Aktualisierung verschoben.'
+test "$(uci -q get firewall.mango_fritz_v6.target)" = REJECT || error 'Sperrregel fehlt oder wurde veraendert.'
+gateway=$(get gateway_ipv4)
+name=$(get gateway_dns_name)
+ipv4 "$gateway" && hostname "$name" || error 'Ungueltiger Gateway-DNS-Endpunkt.'
+if ! timeout 15 nslookup "$name" "$gateway" > "$lock/dns" 2>&1; then
+    error 'DNS-Abfrage fehlgeschlagen. Sperrliste bleibt erhalten.'
+fi
+awk '/^Name:/ {answer=1; next} answer && /^Address([[:space:]]|:)/ {if($NF ~ /:/ && $NF ~ /^[0-9a-fA-F:]+$/) print tolower($NF)}' "$lock/dns" | sort -u > "$lock/addresses"
+test -s "$lock/addresses" || error 'Keine IPv6-Adressen erhalten. Sperrliste bleibt erhalten.'
+old=$(uci -q get firewall.mango_fritz_v6.dest_ip)
+new=$old
+while IFS= read -r address; do
+    ipv6 "$address" || error 'Ungueltige IPv6-Antwort; keine Aenderung.'
+    case " $new " in *" $address "*) ;; *) new="$new $address";; esac
+done < "$lock/addresses"
+# Keep old prefixes to protect addresses still valid during renumbering.
+# Bound growth; manual pruning requires checking old addresses are no longer assigned.
+count=$(printf '%s\n' "$new" | awk '{print NF}')
+test "$count" -le 64 || error '64 Adressen erreicht. Alte Praefixe manuell pruefen.'
+if test "$new" != "$old"; then
+    cp -p /etc/config/firewall "$lock/firewall"
+    for address in $new; do
+        case " $old " in *" $address "*) ;; *) uci add_list "firewall.mango_fritz_v6.dest_ip=$address";; esac
+    done
+    uci commit firewall
+    if ! /etc/init.d/firewall reload > "$lock/reload" 2>&1; then
+        cp -p "$lock/firewall" /etc/config/firewall
+        /etc/init.d/firewall reload >/dev/null 2>&1 || true
+        error 'Neuladen fehlgeschlagen; alte Konfiguration wiederhergestellt. Pruefung wird wiederholt.'
+    fi
+    logger -t mango-management 'IPv6-Sperrliste ergaenzt.'
+fi
+# Volatile proof of a successfully completed check, no periodic flash writes.
+date +%s > /tmp/mango-management-last-check

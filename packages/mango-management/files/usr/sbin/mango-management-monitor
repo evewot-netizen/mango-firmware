@@ -1,0 +1,29 @@
+#!/bin/sh
+# This command is used as an SSH forced command. Never eval SSH_ORIGINAL_COMMAND.
+set -eu
+case "${SSH_ORIGINAL_COMMAND:-}" in
+    '')
+        cat /lib/gluon/release
+        cut -d ' ' -f 1 /proc/uptime
+        ;;
+    vpn)
+        timeout 5 lua /usr/lib/mango-management/vpn.lua
+        ;;
+    details)
+        if batctl meshif bat0 interface 2>/dev/null | grep -Eq '^mesh0: active'; then
+            echo Aktiv
+        else
+            echo Inaktiv
+        fi
+        clients=0
+        # Match only the Freifunk AP interface names, never the private WLAN station.
+        for interface in /sys/class/net/client*; do
+            test -d "$interface" || continue
+            count=$(iw dev "${interface##*/}" station dump 2>/dev/null | awk '/authorized:[[:space:]]+yes/ {n++} END {print n+0}')
+            clients=$((clients + count))
+        done
+        peers=$(batctl meshif bat0 neighbors 2>/dev/null | awk '/mesh0/ {n++} END {print n+0}')
+        printf '%s/%s\n' "$clients" "$peers"
+        ;;
+    *) echo 'Befehl nicht erlaubt.' >&2; exit 1;;
+esac

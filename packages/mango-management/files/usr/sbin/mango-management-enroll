@@ -1,0 +1,75 @@
+#!/bin/sh
+# Explicit enrollment only; never invoked by boot or firmware upgrade.
+set -eu
+umask 077
+. /usr/lib/mango-management/common.sh
+. /usr/lib/mango-management/render.sh
+validate_profile
+case "${1:-}" in
+    --check) echo 'Profil syntaktisch gueltig. Peer-Zuordnung am Pi separat pruefen.'; exit 0;;
+    --apply) ;;
+    *) fail 'Aufruf: mango-management-enroll --check oder --apply';;
+esac
+for config in network firewall mango_management; do
+    test -z "$(uci changes "$config")" || fail "Ungespeicherte Aenderungen: $config"
+done
+for section in network.wgverwaltung network.wgverwaltung_pi firewall.wgverwaltung firewall.wgverwaltung_ssh firewall.wgverwaltung_ping firewall.mango_fritz_v4 firewall.mango_fritz_v6; do
+    if uci -q get "$section" >/dev/null; then fail "Bestehende Einrichtung: $section. Keine automatische Migration."; fi
+done
+# Named section IDs and zone names are different; check the actual zone names too.
+uci show firewall | grep -Eq "\.name='$zone'$" || fail 'Uplink-Zone nicht gefunden.'
+if uci show firewall | grep -Eq "\.name='wgmgmt'$"; then fail 'Zone wgmgmt existiert bereits.'; fi
+test -s /etc/wireguard/mango-management.key || fail 'Zuerst mango-management-keygen ausfuehren.'
+wg pubkey < /etc/wireguard/mango-management.key >/dev/null || fail 'Privater Schluessel ungueltig.'
+test -f /lib/netifd/proto/wireguard.sh || fail 'WireGuard-Netifd fehlt.'
+
+backup="/root/vor-mango-management-$(date +%Y%m%d-%H%M%S)"
+mkdir "$backup"
+for file in network firewall mango_management; do cp -p "/etc/config/$file" "$backup/$file"; done
+mkdir -p /etc/dropbear /etc/crontabs
+touch /etc/dropbear/authorized_keys /etc/crontabs/root
+cp -p /etc/dropbear/authorized_keys "$backup/authorized_keys"
+cp -p /etc/crontabs/root "$backup/crontab"
+echo "Sicherung: $backup"
+rollback() {
+    code=$?
+    if test "$code" -ne 0; then
+        for file in network firewall mango_management; do
+            uci revert "$file" 2>/dev/null || true
+            cp -p "$backup/$file" "/etc/config/$file"
+        done
+        cp -p "$backup/authorized_keys" /etc/dropbear/authorized_keys
+        cp -p "$backup/crontab" /etc/crontabs/root
+        ifdown wgverwaltung 2>/dev/null || true
+        /etc/init.d/firewall reload >/dev/null 2>&1 || true
+        ubus call network reload >/dev/null 2>&1 || true
+        /etc/init.d/cron restart >/dev/null 2>&1 || true
+        echo 'Einrichtung fehlgeschlagen; gesicherte Konfiguration wiederhergestellt.' >&2
+    fi
+    exit "$code"
+}
+trap rollback EXIT
+trap 'exit 1' HUP INT TERM
+render_network | uci batch
+uci set network.wgverwaltung.private_key="$(cat /etc/wireguard/mango-management.key)"
+render_firewall | uci batch
+uci commit network
+uci commit firewall
+chmod 600 /etc/config/network
+
+# Do not silently retain a pre-existing unrestricted authorization for this key.
+key_material=$(printf '%s\n' "$monitor_key" | awk '{print $2}')
+if grep -Fq "$key_material" /etc/dropbear/authorized_keys; then fail 'Monitoring-Key bereits vorhanden; Berechtigungen manuell pruefen.'; fi
+printf 'command="/usr/sbin/mango-management-monitor",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty %s\n' "$monitor_key" >> /etc/dropbear/authorized_keys
+chmod 600 /etc/dropbear/authorized_keys
+uci set mango_management.main.enabled=1
+uci commit mango_management
+job='* * * * * /usr/sbin/mango-management-refresh >/dev/null 2>&1'
+grep -Fxq "$job" /etc/crontabs/root || printf '\n%s\n' "$job" >> /etc/crontabs/root
+chmod 600 /etc/crontabs/root
+/etc/init.d/firewall reload
+ubus call network reload
+ifup wgverwaltung
+/etc/init.d/cron enable
+/etc/init.d/cron restart
+echo 'Einrichtung gespeichert. Handshake, Monitoring und Sperren jetzt separat testen.'

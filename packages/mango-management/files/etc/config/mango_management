@@ -1,0 +1,12 @@
+# No private keys or location-specific addresses belong in the firmware.
+# Fill the profile on the device before running mango-management-enroll.
+config profile 'main'
+	option enabled '0'
+	option uplink_zone 'wan'
+	option uplink_interface 'wan'
+	option uplink6_interface 'wan6'
+	option gateway_dns_name 'fritz.box'
+	option endpoint_port '51820'
+	# Required: endpoint_host, server_public_key, tunnel_address, server_address
+	# Required: gateway_ipv4; list gateway_ipv6 for all current router addresses
+	# Required: monitor_public_key (single ssh-ed25519 public key line)

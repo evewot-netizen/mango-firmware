@@ -1,0 +1,9 @@
+case "$ACTION" in
+    ifup|ifupdate)
+        uplink=$(uci -q get mango_management.main.uplink_interface)
+        uplink6=$(uci -q get mango_management.main.uplink6_interface)
+        if [ "$INTERFACE" = "$uplink" ] || [ "$INTERFACE" = "$uplink6" ]; then
+            /usr/sbin/mango-management-refresh >/dev/null 2>&1 &
+        fi
+        ;;
+esac

@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+umask 077
+mkdir -p /etc/wireguard
+chmod 700 /etc/wireguard
+key=/etc/wireguard/mango-management.key
+if test -e "$key"; then
+    test -s "$key" || { echo 'Vorhandener Schluessel ist leer.' >&2; exit 1; }
+else
+    tmp=$(mktemp /etc/wireguard/.management-key.XXXXXX)
+    trap 'rm -f "$tmp"' EXIT
+    wg genkey > "$tmp"
+    # Link rather than overwrite if another process created the key meanwhile.
+    ln "$tmp" "$key"
+fi
+wg pubkey < "$key" > /etc/wireguard/mango-management.pub
+chmod 600 "$key" /etc/wireguard/mango-management.pub
+cat /etc/wireguard/mango-management.pub

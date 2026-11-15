@@ -11,3 +11,6 @@ mango_freifunk
 *.pem
 *.key
 *.tar.gz
+
+# Python test cache
+__pycache__/

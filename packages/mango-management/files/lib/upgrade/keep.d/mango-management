@@ -1,0 +1,5 @@
+/etc/config/mango_management
+/etc/wireguard/mango-management.key
+/etc/wireguard/mango-management.pub
+/etc/crontabs/root
+/etc/dropbear/authorized_keys

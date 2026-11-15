@@ -1,0 +1,10 @@
+#!/bin/sh
+# Restore scheduling after a Gluon upgrade only for explicitly enrolled routers.
+[ "$(uci -q get mango_management.main.enabled)" = 1 ] || exit 0
+umask 077
+mkdir -p /etc/crontabs
+touch /etc/crontabs/root
+job='* * * * * /usr/sbin/mango-management-refresh >/dev/null 2>&1'
+grep -Fxq "$job" /etc/crontabs/root || printf '\n%s\n' "$job" >> /etc/crontabs/root
+chmod 600 /etc/crontabs/root
+/etc/init.d/cron enable

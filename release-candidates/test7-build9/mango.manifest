@@ -1,0 +1,5 @@
+BRANCH=mango
+DATE=2026-11-15 12:21:34+00:00
+PRIORITY=7
+
+gl-mt300n-v2 2025.1-halle1-mango-test7 d71a081fe5b26d88f2a1fef2255dfd90199579fd95b9c9d86021a35375a55f4c 6882116 gluon-ffhal-2025.1-halle1-mango-test7-gl-mt300n-v2-sysupgrade.bin

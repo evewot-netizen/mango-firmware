@@ -252,7 +252,9 @@ write_state() {
     mv "$state/state.new" "$state/state"
 }
 fail_cleanup() {
+    result=$?
     if test "$handed_off" != 1; then
+        echo "Installation aborted before flash handoff (exit $result)."
         write_state ERROR
         if test "$started_hooks" = 1; then
             for hook in /usr/lib/autoupdater/abort.d/*; do
@@ -289,9 +291,20 @@ test "$age" -ge 0 && test "$age" -le 3600
 # Hold the native updater's lock through the flash handoff.
 exec 8> /var/lock/autoupdater.lock
 flock -n 8
+# This exact upstream hook deletes bat0 unconditionally after stopping netifd.
+# netifd may have removed it already. Handle only that known hook idempotently;
+# retain strict failure handling for other hooks and for real deletion errors.
+network_hook=/usr/lib/autoupdater/upgrade.d/10stop-network
+if test -f "$network_hook"; then
+    test "$(sha256sum "$network_hook" | awk '{print $1}')" = d989f0837ad73c6ff1a46ba4d4daafc09c0258d11eb84a185aad8be4ade1eb1e || {
+        echo 'Unknown network-stop hook; refusing to substitute it.'
+        exit 1
+    }
+fi
 # No --force, no -n and no compatibility override: keep configuration and
 # refuse an incompatible image even if the earlier native dry-run allowed it.
 /sbin/sysupgrade --test "$state/firmware.bin" 8>&- 9>&-
+echo 'Image compatibility check passed.'
 # This receipt is an audit record. The Pi must verify the backup before sending
 # its hash; a hash alone cannot prove that a remote archive was safely stored.
 {
@@ -306,12 +319,28 @@ started_hooks=1
 for dir in /usr/lib/autoupdater/download.d /usr/lib/autoupdater/upgrade.d; do
     for hook in "$dir"/*; do
         test -f "$hook" && test -x "$hook" || continue
-        "$hook" 8>&- 9>&-
+        echo "Running upgrade hook: $hook"
+        if test "$hook" = "$network_hook"; then
+            (
+                . /lib/gluon/autoupdater/lib.sh
+                wifi down
+                sleep 1
+                stop network
+                if test -e /sys/class/net/bat0; then
+                    ip link del bat0
+                else
+                    echo 'bat0 already removed by network shutdown.'
+                fi
+            ) 8>&- 9>&-
+        else
+            "$hook" 8>&- 9>&-
+        fi
     done
 done
 sync
 # No respawn and no boot enable: never repeat an installation automatically.
 handed_off=1
+echo 'Handing verified image to sysupgrade.'
 exec /sbin/sysupgrade "$state/firmware.bin"
 MANGO_FILE_3
 /bin/sh -n "$work/install.sh"

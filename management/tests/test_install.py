@@ -51,6 +51,8 @@ exit 0
             '/sbin/sysupgrade':str(self.bin/'sysupgrade'),
             '/etc/mango-ha-update-last':str(self.base/'last'),
             '/usr/lib/autoupdater/':str(self.base)+'/',
+            '/lib/gluon/autoupdater/lib.sh':str(self.base/'updater-lib.sh'),
+            '/sys/class/net/bat0':str(self.base/'bat0'),
         }.items():code=code.replace(old,new)
         p=self.base/'worker';p.write_text(code)
         return subprocess.run(['sh',str(p)],env=self.env,capture_output=True,text=True)
@@ -128,5 +130,67 @@ exit 0
             self.assertIn((ROOT/'router'/name).read_text(),(ROOT/'install-router-control.sh').read_text())
         r=subprocess.run(['sh','-n',str(ROOT/'install-router-control.sh')],capture_output=True,text=True)
         self.assertEqual(r.returncode,0,r.stderr)
+
+    def network_fixture(self):
+        # Exact upstream hook from the installed Gluon build.
+        native='''#!/bin/sh
+
+# shellcheck source=package/gluon-autoupdater/files/lib/gluon/autoupdater/lib.sh
+. /lib/gluon/autoupdater/lib.sh
+
+wifi down
+sleep 1
+stop network
+ip link del bat0
+'''
+        p=self.base/'upgrade.d/10stop-network'
+        p.write_text(native);p.chmod(0o700)
+        self.assertEqual(hashlib.sha256(p.read_bytes()).hexdigest(),
+                         'd989f0837ad73c6ff1a46ba4d4daafc09c0258d11eb84a185aad8be4ade1eb1e')
+        self.env['BAT0']=str(self.base/'bat0')
+        (self.base/'bat0').mkdir()
+        (self.base/'updater-lib.sh').write_text('''stop() {
+    echo "stop $1" >> "$CALLS"
+    test "${FAIL_NETWORK:-0}" = 0 || return 1
+    if test "${KEEP_BAT0:-0}" = 0; then rmdir "$BAT0"; fi
+}
+''')
+        self.tool('wifi','echo wifi >> "$CALLS"\ntest "${FAIL_WIFI:-0}" = 0\n')
+        self.tool('sleep','exit 0\n')
+        self.tool('ip','echo "ip $*" >> "$CALLS"\ntest "${FAIL_DELETE:-0}" = 0 || exit 2\nrmdir "$BAT0"\n')
+
+    def test_network_shutdown_already_removed_bat0_still_flashes(self):
+        self.network_fixture()
+        r=self.run_worker()
+        self.assertEqual(r.returncode,0,r.stderr)
+        self.assertNotIn('ip link del',self.calls())
+        self.assertEqual(sum(x.startswith('sysupgrade') for x in self.calls().splitlines()),2)
+        self.assertIn('bat0 already removed', (self.state/'log').read_text())
+
+    def test_remaining_bat0_is_deleted_before_flash(self):
+        self.network_fixture();self.env['KEEP_BAT0']='1'
+        self.assertEqual(self.run_worker().returncode,0)
+        lines=self.calls().splitlines()
+        self.assertIn('ip link del bat0',lines)
+        self.assertTrue(lines[-1].startswith('sysupgrade '))
+
+    def test_real_network_errors_are_not_ignored(self):
+        for failure in ['FAIL_WIFI','FAIL_NETWORK','FAIL_DELETE']:
+            with self.subTest(failure=failure):
+                # Separate fixture per failure to retain a complete candidate.
+                test=InstallTests();test.setUp()
+                try:
+                    test.network_fixture();test.env[failure]='1';test.env['KEEP_BAT0']='1'
+                    self.assertNotEqual(test.run_worker().returncode,0)
+                    self.assertEqual(sum(x.startswith('sysupgrade') for x in test.calls().splitlines()),1)
+                    self.assertEqual((test.state/'state').read_text().strip(),'ERROR')
+                    self.assertIn('abort',test.calls().splitlines())
+                finally:test.doCleanups()
+
+    def test_changed_upstream_network_hook_is_not_substituted(self):
+        self.network_fixture()
+        p=self.base/'upgrade.d/10stop-network';p.write_text(p.read_text()+'echo changed\n')
+        self.assertNotEqual(self.run_worker().returncode,0)
+        self.assertEqual(self.calls(),'')
 
 if __name__=='__main__':unittest.main()

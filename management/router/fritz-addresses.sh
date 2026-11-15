@@ -1,0 +1,109 @@
+#!/bin/sh
+set -eu
+umask 077
+fail() { echo "Mango management: $*" >&2; exit 1; }
+ipv4() {
+    printf '%s\n' "$1" | awk -F. '
+        NF!=4 {exit 1}
+        {for(i=1;i<=4;i++) if($i !~ /^[0-9]+$/ || length($i)>3 || $i+0>255) exit 1}
+    '
+}
+# Reject shell/UCI metacharacters and malformed literals before any mutation.
+ipv6() {
+    printf '%s\n' "$1" | awk -F: '
+        /[^0-9a-fA-F:]/ || !/:/ || /:::/ {exit 1}
+        {s=$0; n=gsub(/::/,"",s); if(n>1) exit 1;
+         for(i=1;i<=NF;i++) if(length($i)>4) exit 1;
+         if(n==0) {if(NF!=8 || /^:/ || /:$/) exit 1}
+         else {groups=0; for(i=1;i<=NF;i++) if(length($i)) groups++; if(groups>=8) exit 1}}
+    '
+}
+hostname() {
+    case "$1" in ''|*[!A-Za-z0-9.-]*|-*|.*|*..*|*-) return 1;; esac
+    test "${#1}" -le 253
+}
+lock=/tmp/mango-fritz-adressen.lock
+mkdir "$lock" 2>/dev/null || exit 0
+trap 'rm -rf "$lock"' EXIT
+trap 'exit 1' HUP INT TERM
+error() { logger -t mango-fritz "$*"; fail "$*"; }
+test -z "$(uci changes firewall)" || error 'Firewall-Aenderungen offen.'
+uplink=wan
+case "$uplink" in ''|*[!A-Za-z0-9_]*) error 'Ungueltiger Uplink.';; esac
+zone=wan
+case "$zone" in ''|*[!A-Za-z0-9_]*) error 'Ungueltige Zone.';; esac
+for family in 4 6; do
+    rule=firewall.mango_fritz_v$family
+    test "$(uci -q get "$rule.target")" = REJECT || error 'Sperrregel veraendert.'
+    test "$(uci -q get "$rule.dest")" = "$zone" || error 'Sperrzone veraendert.'
+    test "$(uci -q get "$rule.proto")" = tcp || error 'Sperrprotokoll veraendert.'
+    test "$(uci -q get "$rule.dest_port")" = '80 443 49000 49443' || error 'Sperrports veraendert.'
+done
+# Select the private uplink device, never a Freifunk default route.
+ifstatus "$uplink" > "$lock/status" || error 'Uplink nicht verfuegbar.'
+test "$(jsonfilter -i "$lock/status" -e '@.up')" = true || error 'Uplink ist nicht aktiv.'
+device=$(jsonfilter -i "$lock/status" -e '@.l3_device')
+case "$device" in ''|*[!A-Za-z0-9_.:-]*) error 'Ungueltiges Uplink-Geraet.';; esac
+ip -4 route show default dev "$device" > "$lock/routes4"
+awk '$1=="default" && $2=="via" {print $3}' "$lock/routes4" | sort -u > "$lock/gateways4"
+test "$(wc -l < "$lock/gateways4")" -eq 1 || error 'Kein eindeutiges IPv4-Uplink-Gateway.'
+gateway=$(cat "$lock/gateways4")
+ipv4 "$gateway" || error 'Ungueltiges IPv4-Gateway.'
+ip -6 route show default dev "$device" > "$lock/routes6"
+awk '$1=="default" && $2=="via" {print tolower($3)}' "$lock/routes6" | sort -u > "$lock/gateways6"
+name=fritz.box
+hostname "$name" || error 'Ungueltiger Gateway-DNS-Name.'
+old4=$(uci -q get firewall.mango_fritz_v4.dest_ip)
+old6=$(uci -q get firewall.mango_fritz_v6.dest_ip)
+new4=$old4
+new6=$old6
+add4() {
+    ipv4 "$1" || error 'Ungueltige IPv4-Adresse.'
+    case " $new4 " in *" $1 "*) ;; *) new4="$new4 $1";; esac
+}
+add6() {
+    ipv6 "$1" || error 'Ungueltige IPv6-Adresse.'
+    case " $new6 " in *" $1 "*) ;; *) new6="$new6 $1";; esac
+}
+add4 "$gateway"
+add4 169.254.1.1
+while IFS= read -r address; do add6 "$address"; done < "$lock/gateways6"
+# Publish directly observed gateways even if DNS is unavailable. Keep old addresses.
+apply_lists() {
+    test "$(printf '%s\n' "$new4" | awk '{print NF}')" -le 64 || error 'IPv4-Liste voll.'
+    test "$(printf '%s\n' "$new6" | awk '{print NF}')" -le 64 || error 'IPv6-Liste voll.'
+    if test "$new4" = "$old4" && test "$new6" = "$old6"; then return; fi
+    cp -p /etc/config/firewall "$lock/firewall"
+    if ! (
+        set -e
+        for address in $new4; do
+            case " $old4 " in *" $address "*) ;; *) uci add_list "firewall.mango_fritz_v4.dest_ip=$address" || exit 1;; esac
+        done
+        for address in $new6; do
+            case " $old6 " in *" $address "*) ;; *) uci add_list "firewall.mango_fritz_v6.dest_ip=$address" || exit 1;; esac
+        done
+        uci commit firewall || exit 1
+        /etc/init.d/firewall reload > "$lock/reload" 2>&1
+    ); then
+        uci revert firewall || true
+        cp -p "$lock/firewall" /etc/config/firewall
+        /etc/init.d/firewall reload >/dev/null 2>&1 || true
+        error 'Firewall-Aktualisierung fehlgeschlagen; vorherige Regeln wiederhergestellt.'
+    fi
+    old4=$new4
+    old6=$new6
+    logger -t mango-fritz 'Uplink-Sperradressen ergaenzt.'
+}
+apply_lists
+# Query the CURRENT private gateway, not the previous site's saved IPv4 address.
+timeout 15 nslookup "$name" "$gateway" > "$lock/dns" 2>&1 || error 'DNS fehlgeschlagen; Gateway-Sperren aktiv, alte DNS-Adressen erhalten.'
+awk '/^Name:/ {answer=1; next} answer && /^Address([[:space:]]|:)/ {print $NF}' "$lock/dns" | sort -u > "$lock/answers"
+test -s "$lock/answers" || error 'Keine Gateway-DNS-Antworten.'
+while IFS= read -r address; do
+    case "$address" in
+        *:*) address=$(printf '%s' "$address" | tr A-F a-f); add6 "$address";;
+        *) add4 "$address";;
+    esac
+done < "$lock/answers"
+apply_lists
+date +%s > /tmp/mango-fritz-last-check

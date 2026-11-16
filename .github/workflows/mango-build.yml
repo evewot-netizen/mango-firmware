@@ -62,7 +62,10 @@ jobs:
             libncurses-dev zlib1g-dev libssl-dev libelf-dev \
             llvm wget rsync time qemu-utils ecdsautils swig \
             gettext xsltproc file patch perl xz-utils zstd \
-            ca-certificates curl
+            ca-certificates curl cmake libjson-c-dev
+
+      - name: uhttpd HTTP-Grenzen auf localhost pruefen
+        run: bash tests/build-check-uhttpd.sh
 
       - name: Getestete Quellstaende laden
         run: |
@@ -125,6 +128,17 @@ jobs:
             "$GITHUB_WORKSPACE/patches/hostapd-security-2026-1.patch"
           git -C openwrt apply \
             "$GITHUB_WORKSPACE/patches/hostapd-security-2026-1.patch"
+
+      - name: uhttpd Sicherheitskorrektur einbinden
+        run: |
+          set -euo pipefail
+          makefile=build/gluon/openwrt/package/network/services/uhttpd/Makefile
+          grep -Fxq 'PKG_SOURCE_VERSION:=7e64e8bad2415cec0a6d9770ec379db54273c7a7' "$makefile"
+          grep -Fxq 'PKG_RELEASE:=4' "$makefile"
+          mkdir -p build/gluon/openwrt/package/network/services/uhttpd/patches
+          cp patches/uhttpd/100-limit-request-headers.patch \
+            build/gluon/openwrt/package/network/services/uhttpd/patches/
+          sed -i 's/^PKG_RELEASE:=4$/PKG_RELEASE:=5/' "$makefile"
 
       - name: Mango-Firmware bauen
         run: |

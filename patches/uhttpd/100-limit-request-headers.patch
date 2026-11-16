@@ -1,0 +1,75 @@
+From: Jo-Philipp Wich <jo@mein.io>
+Subject: client: cap cumulative header count and bytes per request
+Origin: https://github.com/openwrt/uhttpd/commit/f6c2fcfa539de49ddf6de8f805110c8804602e98
+Security: CVE-2026-102338 / GHSA-vhx4-3p5q-m59q
+Applied unchanged to uhttpd 7e64e8bad2415cec0a6d9770ec379db54273c7a7.
+
+diff --git a/client.c b/client.c
+index 1d302d7..582f416 100644
+--- a/client.c
++++ b/client.c
+@@ -359,7 +359,7 @@ static void client_header_complete(struct client *cl)
+ 	uh_handle_request(cl);
+ }
+ 
+-static void client_parse_header(struct client *cl, char *data)
++static void client_parse_header(struct client *cl, char *data, size_t line_len)
+ {
+ 	struct http_request *r = &cl->request;
+ 	char *err;
+@@ -373,6 +373,18 @@ static void client_parse_header(struct client *cl, char *data)
+ 		return;
+ 	}
+ 
++	/* Cap header count and cumulative header bytes so a connection
++	 * cannot pin an unbounded amount of memory in cl->hdr; line_len
++	 * includes the CRLF stripped from the line by the caller.
++	 */
++	r->header_count++;
++	r->header_bytes += line_len;
++	if (r->header_count > UH_LIMIT_HEADER_COUNT ||
++	    r->header_bytes > UH_LIMIT_HEADER_BYTES) {
++		uh_header_error(cl, 431, "Request Header Fields Too Large");
++		return;
++	}
++
+ 	val = uh_split_header(data);
+ 	if (!val) {
+ 		cl->state = CLIENT_STATE_DONE;
+@@ -532,9 +544,9 @@ static bool client_header_cb(struct client *cl, char *buf, int len)
+ 	if (!newline)
+ 		return false;
+ 
+-	*newline = 0;
+-	client_parse_header(cl, buf);
+ 	line_len = newline + 2 - buf;
++	*newline = 0;
++	client_parse_header(cl, buf, line_len);
+ 	ustream_consume(cl->us, line_len);
+ 	if (cl->state == CLIENT_STATE_DATA)
+ 		return client_data_cb(cl, newline + 2, len - line_len);
+diff --git a/uhttpd.h b/uhttpd.h
+index c755df6..15b7623 100644
+--- a/uhttpd.h
++++ b/uhttpd.h
+@@ -44,6 +44,11 @@
+ 
+ #define UH_LIMIT_CLIENTS	64
+ 
++/* per-request cumulative header limits, aligned with common HTTP server
++ * defaults (Apache LimitRequestFields=100, Node.js max-header-size=16 KiB) */
++#define UH_LIMIT_HEADER_COUNT	100
++#define UH_LIMIT_HEADER_BYTES	16384
++
+ #define __enum_header(_name, _val) HDR_##_name,
+ #define __blobmsg_header(_name, _val) [HDR_##_name] = { .name = #_val, .type = BLOBMSG_TYPE_STRING },
+ 
+@@ -149,6 +154,8 @@ struct http_request {
+ 	bool disable_chunked;
+ 	uint8_t transfer_chunked;
+ 	const struct auth_realm *realm;
++	size_t header_count;
++	size_t header_bytes;
+ };
+ 
+ enum client_state {
